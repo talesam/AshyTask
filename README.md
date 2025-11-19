@@ -12,6 +12,8 @@ Bot para Telegram desenvolvido para gerenciar tarefas do projeto BigCommunity (X
 - 💬 Sistema de comentários
 - 🔍 Busca de tarefas
 - 👤 Controle de autoria (apenas o criador pode editar/deletar)
+- 📝 Sistema de Changelog para documentar mudanças do projeto
+- 📌 Restrição a tópico específico (ideal para grupos com múltiplos tópicos)
 - 📱 Interface intuitiva com inline keyboards
 
 ## 🚀 Instalação
@@ -61,7 +63,21 @@ python bot.py
 - `/tarefas` - Abre o menu principal de tarefas
 - `/nova` - Cria uma nova tarefa (processo guiado)
 - `/minhas` - Lista suas tarefas
+- `/menu` - Abre menu de navegação completo
+- `/stats` - Mostra estatísticas do projeto
 - `/buscar [termo]` - Busca tarefas por palavra-chave
+
+### Comandos de Changelog
+- `/changelog` - Abre menu de gerenciamento de changelogs
+  - Criar novo changelog
+  - Listar todos ou apenas pinados
+  - Filtrar por categoria
+  - Ver estatísticas
+
+### Comandos de Tópico
+- `/topicoid` - Mostra o ID do tópico atual
+- `/settopico [ID]` - Configura o tópico permitido para o bot
+- `/settopico off` - Desabilita restrição de tópico
 
 ### Comandos Administrativos
 - `/addcategoria [nome]` - Adiciona nova categoria
@@ -73,14 +89,26 @@ python bot.py
 
 ## 🎮 Como Usar
 
+### Configurar Tópico (Opcional)
+
+Para restringir o bot a funcionar apenas em um tópico específico:
+
+1. Entre no tópico desejado no seu grupo Telegram
+2. Digite `/topicoid` para ver o ID do tópico
+3. Copie o ID mostrado (exemplo: `12345`)
+4. Digite `/settopico 12345` para configurar
+5. ✅ Agora o bot só responderá neste tópico!
+
+Para desabilitar a restrição: `/settopico off`
+
 ### Criar uma Nova Tarefa
 
 1. Digite `/nova`
-2. Escolha a categoria (XFCE, Cinnamon, GNOME, Geral)
-3. Digite o título
-4. Digite a descrição (ou `/pular`)
+2. Digite o título
+3. Digite a descrição
+4. Escolha a categoria (XFCE, Cinnamon, GNOME, Geral)
 5. Escolha a prioridade (Alta, Média, Baixa)
-6. Envie uma imagem (opcional, ou `/pular`)
+6. Envie uma imagem (opcional, ou clique em Pular)
 7. Tarefa criada! ✅
 
 ### Gerenciar Tarefas
@@ -94,6 +122,16 @@ Use `/tarefas` para abrir o menu principal. Você pode:
 - **Editar** tarefa (apenas criador) ✏️
 - **Deletar** tarefa (apenas criador) 🗑️
 - **Ver comentários** 💬
+
+### Gerenciar Changelogs
+
+Use `/changelog` para documentar mudanças do projeto:
+
+- **Criar changelog** com categoria e descrição
+- **Pinar changelogs** importantes para destaque
+- **Filtrar** por categoria (Ashy Terminal, GNOME, XFCE, etc.)
+- **Editar ou deletar** changelogs (apenas criador)
+- **Ver estatísticas** de changelogs por categoria e autor
 
 ### Status das Tarefas
 
@@ -121,11 +159,14 @@ Use `/tarefas` para abrir o menu principal. Você pode:
 
 ## 🗄️ Banco de Dados
 
-O bot usa SQLite com 3 tabelas:
+O bot usa SQLite com 6 tabelas:
 
-- **categorias** - Armazena as categorias (XFCE, Cinnamon, etc.)
+- **categorias** - Armazena as categorias de tarefas (XFCE, Cinnamon, etc.)
 - **tarefas** - Armazena todas as tarefas
 - **comentarios** - Armazena comentários das tarefas
+- **changelogs** - Armazena histórico de mudanças do projeto
+- **categorias_changelog** - Categorias específicas para changelogs
+- **configuracoes** - Configurações do bot (como ID do tópico permitido)
 
 O banco é criado automaticamente na primeira execução.
 
@@ -155,27 +196,51 @@ STATUS_EMOJI = {
 }
 ```
 
-## 🔒 Segurança
+## 🔒 Segurança e Permissões
 
-- Apenas o criador da tarefa pode editá-la ou deletá-la
-- Todos os membros do grupo podem ver e comentar
-- Todos podem mudar o status das tarefas (colaborativo)
+### Tarefas
+- ✏️ Apenas o criador pode editar ou deletar
+- 👥 Todos podem ver, comentar e mudar status (colaborativo)
+
+### Changelogs
+- ✏️ Apenas o criador pode editar ou deletar
+- 📌 Todos podem pinar/despinar changelogs
+- 👥 Todos podem visualizar
+
+### Restrição de Tópico
+- 🔒 Administrador pode restringir o bot a um tópico específico usando `/settopico`
+- ⚠️ Quando configurado, o bot só responde no tópico definido
+- 🔓 Use `/settopico off` para remover a restrição
 
 ## 🐛 Troubleshooting
 
 ### Bot não responde
-- Verifique se o token está correto
+- Verifique se o token está correto no arquivo `.env`
 - Certifique-se que o bot está rodando (`python bot.py`)
 - Verifique os logs no terminal
+- **Se estiver em um grupo com tópicos:** Verifique se está no tópico correto com `/topicoid`
+
+### Bot só responde em um tópico específico
+- O bot foi configurado para funcionar apenas em um tópico
+- Use `/topicoid` no tópico atual para ver o ID
+- Use `/settopico off` para desabilitar a restrição (se tiver permissão)
 
 ### Erro de permissão no grupo
 - Adicione o bot ao grupo
 - Dê permissão de admin ao bot (para apagar mensagens se necessário)
+- Em grupos com tópicos, certifique-se que o bot pode postar no tópico desejado
 
 ### Banco de dados corrompido
 ```bash
 rm tarefas_bot.db
 python bot.py  # Recria o banco
+```
+
+### Ver qual tópico está configurado
+```bash
+# O ID fica salvo no banco de dados
+# Use o comando /topicoid dentro do tópico para ver o ID
+# Use /settopico sem argumentos para ver as instruções
 ```
 
 ## 📝 Notas de Desenvolvimento
