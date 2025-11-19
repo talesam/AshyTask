@@ -134,6 +134,8 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /changelog - Gerenciar mudanças do projeto
 /stats - Ver estatísticas do projeto
 /menu - Abrir menu principal
+/topicoid - Ver ID do tópico atual
+/settopico - Configurar tópico permitido
 /ajuda - Mostrar esta mensagem
 
 *🎯 Como usar:*
@@ -143,6 +145,12 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 3️⃣ *Gerenciar:* Clique na tarefa para ver opções
 4️⃣ *Atualizar status:* Use os botões 🔄 ou ✅
 5️⃣ *Editar/Deletar:* Botões ✏️ e 🗑️
+
+*📌 Configurar Tópico:*
+1️⃣ Entre no tópico desejado e use /topicoid
+2️⃣ Copie o ID do tópico mostrado
+3️⃣ Use /settopico [ID] para configurar
+4️⃣ Para desabilitar: /settopico off
 
 *🏷️ Categorias:*
 • XFCE, Cinnamon, GNOME, Geral
@@ -157,7 +165,7 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • 🟡 Média
 • 🟢 Baixa
 """
-    
+
     await update.message.reply_text(texto, parse_mode='Markdown')
 
 
@@ -1250,6 +1258,8 @@ async def handle_menu(query, data: str, context):
 /changelog - Gerenciar mudanças do projeto
 /stats - Ver estatísticas do projeto
 /menu - Abrir este menu
+/topicoid - Ver ID do tópico atual
+/settopico - Configurar tópico permitido
 /ajuda - Mostrar esta mensagem
 
 *🎯 Como usar:*
@@ -1259,6 +1269,12 @@ async def handle_menu(query, data: str, context):
 3️⃣ *Gerenciar:* Clique na tarefa para ver opções
 4️⃣ *Atualizar status:* Use os botões 🔄 ou ✅
 5️⃣ *Editar/Deletar:* Botões ✏️ e 🗑️
+
+*📌 Configurar Tópico:*
+1️⃣ Entre no tópico desejado e use /topicoid
+2️⃣ Copie o ID do tópico mostrado
+3️⃣ Use /settopico [ID] para configurar
+4️⃣ Para desabilitar: /settopico off
 
 *🏷️ Categorias:*
 • XFCE, Cinnamon, GNOME, Geral
