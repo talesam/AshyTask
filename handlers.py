@@ -27,6 +27,7 @@ Comandos disponíveis:
 /nova - Cria uma nova tarefa
 /minhas - Mostra suas tarefas
 /buscar [termo] - Busca tarefas
+/comentar [id] [texto] - Adiciona comentário
 /addcategoria [nome] - Adiciona nova categoria
 /ajuda - Mostra esta mensagem
 

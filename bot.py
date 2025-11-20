@@ -17,6 +17,7 @@ from datetime import datetime
 
 from database import Database
 from keyboards import *
+import handlers
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -99,6 +100,9 @@ Este bot ajuda a organizar as tarefas da equipe de desenvolvimento.
 /nova - Criar nova tarefa
 /tarefas - Ver todas as tarefas
 /minhas - Ver suas tarefas
+/buscar [termo] - Buscar tarefas
+/comentar [id] [texto] - Adicionar comentário
+/addcategoria [nome] - Criar nova categoria
 /changelog - Gerenciar mudanças do projeto
 /stats - Ver estatísticas
 /menu - Abrir menu principal
@@ -131,6 +135,9 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /nova - Criar uma nova tarefa
 /tarefas - Listar todas as tarefas
 /minhas - Ver apenas suas tarefas
+/buscar [termo] - Buscar tarefas por palavra-chave
+/comentar [id] [texto] - Adicionar comentário em uma tarefa
+/addcategoria [nome] - Criar uma nova categoria
 /changelog - Gerenciar mudanças do projeto
 /stats - Ver estatísticas do projeto
 /menu - Abrir menu principal
@@ -145,6 +152,7 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 3️⃣ *Gerenciar:* Clique na tarefa para ver opções
 4️⃣ *Atualizar status:* Use os botões 🔄 ou ✅
 5️⃣ *Editar/Deletar:* Botões ✏️ e 🗑️
+6️⃣ *Adicionar categoria:* Use /addcategoria ou clique no botão ➕
 
 *📌 Configurar Tópico:*
 1️⃣ Entre no tópico desejado e use /topicoid
@@ -154,6 +162,7 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 *🏷️ Categorias:*
 • XFCE, Cinnamon, GNOME, Geral
+• Você pode criar novas categorias!
 
 *📊 Status:*
 • ⏳ Pendente
@@ -531,6 +540,29 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def processar_mensagem_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processa mensagens de texto para edição inline e comentários"""
     texto = update.message.text
+
+    # Verificar se está criando categoria de tarefa inline
+    if 'criando_categoria_tarefa' in context.user_data:
+        sucesso = db.adicionar_categoria(texto)
+        if sucesso:
+            await update.message.reply_text(
+                f"✅ Categoria *{texto}* criada com sucesso!",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📋 Ver Tarefas", callback_data="menu_tarefas"),
+                    InlineKeyboardButton("🔙 Menu", callback_data="menu_voltar")
+                ]])
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ Categoria *{texto}* já existe!",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Menu", callback_data="menu_voltar")
+                ]])
+            )
+        del context.user_data['criando_categoria_tarefa']
+        return
 
     # Verificar se está criando tarefa via inline
     if context.user_data.get('aguardando') == 'titulo_tarefa':
@@ -1138,6 +1170,19 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return
 
+    # Nova categoria inline
+    elif data == "nova_categoria":
+        context.user_data['criando_categoria_tarefa'] = True
+        await query.answer("✍️ Digite o nome da nova categoria...")
+        texto = "➕ *Nova Categoria de Tarefa*\n\n_Digite o nome da nova categoria:_"
+        if query.message.photo:
+            chat_id = query.message.chat_id
+            await query.message.delete()
+            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown')
+        else:
+            await query.edit_message_text(texto, parse_mode='Markdown')
+        return
+
     # Changelog
     elif data.startswith("changelog_") or data.startswith("newlog_"):
         await handle_changelog(query, data, context)
@@ -1255,6 +1300,9 @@ async def handle_menu(query, data: str, context):
 /nova - Criar uma nova tarefa
 /tarefas - Listar todas as tarefas
 /minhas - Ver apenas suas tarefas
+/buscar [termo] - Buscar tarefas por palavra-chave
+/comentar [id] [texto] - Adicionar comentário em uma tarefa
+/addcategoria [nome] - Criar uma nova categoria
 /changelog - Gerenciar mudanças do projeto
 /stats - Ver estatísticas do projeto
 /menu - Abrir este menu
@@ -1269,6 +1317,7 @@ async def handle_menu(query, data: str, context):
 3️⃣ *Gerenciar:* Clique na tarefa para ver opções
 4️⃣ *Atualizar status:* Use os botões 🔄 ou ✅
 5️⃣ *Editar/Deletar:* Botões ✏️ e 🗑️
+6️⃣ *Adicionar categoria:* Use /addcategoria ou clique no botão ➕
 
 *📌 Configurar Tópico:*
 1️⃣ Entre no tópico desejado e use /topicoid
@@ -1278,6 +1327,7 @@ async def handle_menu(query, data: str, context):
 
 *🏷️ Categorias:*
 • XFCE, Cinnamon, GNOME, Geral
+• Você pode criar novas categorias!
 
 *📊 Status:*
 • ⏳ Pendente
@@ -1906,6 +1956,8 @@ def main():
     application.add_handler(CommandHandler("tarefas", listar_tarefas))
     application.add_handler(CommandHandler("minhas", minhas_tarefas))
     application.add_handler(CommandHandler("comentar", adicionar_comentario_cmd))
+    application.add_handler(CommandHandler("buscar", handlers.buscar_tarefas))
+    application.add_handler(CommandHandler("addcategoria", handlers.adicionar_categoria))
     application.add_handler(CommandHandler("topicoid", topicoid))
     application.add_handler(CommandHandler("settopico", settopico))
     
