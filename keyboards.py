@@ -37,6 +37,7 @@ def menu_categorias(categorias):
         keyboard.append([
             InlineKeyboardButton(f"🖥️ {cat['nome']}", callback_data=f"cat_{cat['id']}")
         ])
+    keyboard.append([InlineKeyboardButton("➕ Nova Categoria", callback_data="nova_categoria")])
     keyboard.append([InlineKeyboardButton("⬅️ Voltar", callback_data="voltar_menu")])
     return InlineKeyboardMarkup(keyboard)
 
