@@ -5,6 +5,9 @@ from database import Database
 import keyboards
 import math
 
+# Versão do bot
+VERSION = "1.0.3"
+
 # Estados da conversa para criar nova tarefa
 ESCOLHER_CATEGORIA, DIGITAR_TITULO, DIGITAR_DESCRICAO, ESCOLHER_PRIORIDADE, ENVIAR_IMAGEM = range(5)
 
@@ -18,8 +21,8 @@ db = Database()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler do comando /start"""
-    texto = """
-🤖 *Bot de Gerenciamento de Tarefas - BigCommunity*
+    texto = f"""
+🤖 *Ashy Task* v{VERSION}
 
 Comandos disponíveis:
 

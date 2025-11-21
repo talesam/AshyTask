@@ -400,6 +400,20 @@ class Database:
         conn.commit()
         conn.close()
 
+    def salvar_info_topico(self, topico_id: str, topico_nome: str, chat_id: str):
+        """Salva informações completas do tópico"""
+        self.salvar_config('topico_permitido', topico_id)
+        self.salvar_config('topico_nome', topico_nome)
+        self.salvar_config('topico_chat_id', chat_id)
+
+    def obter_info_topico(self) -> Dict[str, Optional[str]]:
+        """Obtém informações completas do tópico configurado"""
+        return {
+            'id': self.obter_config('topico_permitido'),
+            'nome': self.obter_config('topico_nome'),
+            'chat_id': self.obter_config('topico_chat_id')
+        }
+
     # ============ CHANGELOGS ============
 
     def listar_categorias_changelog(self) -> List[str]:
