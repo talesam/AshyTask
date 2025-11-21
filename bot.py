@@ -1,7 +1,7 @@
 import logging
 import warnings
 import os
-from typing import Dict
+from typing import Dict, Optional
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -154,9 +154,9 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 *📌 Configurar Tópico:*
 1️⃣ Entre no tópico desejado e use /topicoid
-2️⃣ Copie o ID do tópico mostrado
-3️⃣ Use /settopico [ID] para configurar
-4️⃣ Para desabilitar: /settopico off
+2️⃣ Use /settopico [ID] [nome_opcional]
+   Exemplo: `/settopico 31210 Desenvolvimento`
+3️⃣ Para desabilitar: /settopico off
 
 *🏷️ Categorias:*
 • XFCE, Cinnamon, GNOME, Geral
@@ -237,9 +237,13 @@ async def settopico(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await message.reply_text(
-            "⚠️ Use: `/settopico <ID_do_tópico>`\n\n"
-            "Para descobrir o ID, use /topicoid dentro do tópico desejado.\n\n"
-            "💡 *Dica:* Execute /settopico no próprio tópico onde deseja configurar o bot!",
+            "⚠️ *Uso:*\n"
+            "`/settopico <ID> [nome_opcional]`\n\n"
+            "*Exemplos:*\n"
+            "`/settopico 31210`\n"
+            "`/settopico 31210 Desenvolvimento`\n"
+            "`/settopico off` (desabilita)\n\n"
+            "💡 Use /topicoid dentro do tópico para descobrir o ID.",
             parse_mode='Markdown'
         )
         return
@@ -250,25 +254,22 @@ async def settopico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Se é "off", desabilita
         if topic_id.lower() == 'off':
             db.salvar_config('topico_permitido', 'off')
+            db.salvar_config('topico_nome', '')
+            db.salvar_config('topico_chat_id', '')
             await message.reply_text(
-                "✅ Restrição de tópico desabilitada!\n\nO bot agora responderá em qualquer tópico.",
+                "✅ *Restrição desabilitada!*\n\nO bot agora responderá em qualquer tópico.",
                 parse_mode='Markdown'
             )
             return
 
-        # Capturar informações do tópico atual
-        topico_nome = "Tópico Configurado"
-        chat_id = str(message.chat_id)
+        # Capturar nome do tópico (se fornecido) ou usar padrão
+        if len(context.args) > 1:
+            topico_nome = " ".join(context.args[1:])
+        else:
+            topico_nome = f"Tópico #{topic_id}"
 
-        # Se a mensagem é de um tópico, pegar o nome
-        if message.is_topic_message:
-            # Tentar pegar o nome do tópico (disponível em alguns casos)
-            if hasattr(message, 'forum_topic_created'):
-                topico_nome = message.forum_topic_created.name
-            elif hasattr(message, 'reply_to_message') and message.reply_to_message:
-                topico_nome = f"Tópico #{topic_id}"
-            else:
-                topico_nome = f"Tópico #{topic_id}"
+        # Capturar chat_id
+        chat_id = str(message.chat_id)
 
         # Salvar informações completas do tópico
         db.salvar_info_topico(topic_id, topico_nome, chat_id)
@@ -284,11 +285,62 @@ Para desabilitar, use: `/settopico off`
 """
         await message.reply_text(texto, parse_mode='Markdown')
     except Exception as e:
+        logger.error(f"Erro ao configurar tópico: {e}")
         await message.reply_text(
             f"❌ Erro ao configurar tópico: {str(e)}",
             parse_mode='Markdown'
         )
 
+
+def obter_thread_id_configurado() -> Optional[int]:
+    """Retorna o thread_id do tópico configurado, se existir"""
+    topico_config = db.obter_config('topico_permitido')
+    if topico_config and topico_config != 'off':
+        try:
+            return int(topico_config)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+async def enviar_mensagem_no_topico(bot, chat_id, text, parse_mode='Markdown', reply_markup=None):
+    """Envia mensagem no tópico configurado"""
+    thread_id = obter_thread_id_configurado()
+    if thread_id:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+            message_thread_id=thread_id
+        )
+    else:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup
+        )
+
+async def enviar_foto_no_topico(bot, chat_id, photo, caption=None, parse_mode='Markdown', reply_markup=None):
+    """Envia foto no tópico configurado"""
+    thread_id = obter_thread_id_configurado()
+    if thread_id:
+        return await bot.send_photo(
+            chat_id=chat_id,
+            photo=photo,
+            caption=caption,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+            message_thread_id=thread_id
+        )
+    else:
+        return await bot.send_photo(
+            chat_id=chat_id,
+            photo=photo,
+            caption=caption,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup
+        )
 
 def criar_link_topico(chat_id: str, topic_id: str) -> str:
     """Cria um link clicável para o tópico"""
@@ -818,7 +870,7 @@ async def mostrar_changelog(query, changelog_id: int):
     if query.message.photo:
         chat_id = query.message.chat_id
         await query.message.delete()
-        await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
+        await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
     else:
         await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
 
@@ -1078,7 +1130,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown')
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown')
         else:
             await query.edit_message_text(texto, parse_mode='Markdown')
         return
@@ -1093,7 +1145,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown')
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown')
         else:
             await query.edit_message_text(texto, parse_mode='Markdown')
         return
@@ -1108,7 +1160,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown')
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown')
         else:
             await query.edit_message_text(texto, parse_mode='Markdown')
         return
@@ -1127,7 +1179,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -1215,7 +1267,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown')
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown')
         else:
             await query.edit_message_text(texto, parse_mode='Markdown')
         return
@@ -1360,9 +1412,9 @@ async def handle_menu(query, data: str, context):
 
 *📌 Configurar Tópico:*
 1️⃣ Entre no tópico desejado e use /topicoid
-2️⃣ Copie o ID do tópico mostrado
-3️⃣ Use /settopico [ID] para configurar
-4️⃣ Para desabilitar: /settopico off
+2️⃣ Use /settopico [ID] [nome_opcional]
+   Exemplo: `/settopico 31210 Desenvolvimento`
+3️⃣ Para desabilitar: /settopico off
 
 *🏷️ Categorias:*
 • XFCE, Cinnamon, GNOME, Geral
@@ -1473,7 +1525,7 @@ async def handle_changelog(query, data: str, context):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
         else:
             await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
 
@@ -1485,7 +1537,7 @@ async def handle_changelog(query, data: str, context):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown')
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown')
         else:
             await query.edit_message_text(texto, parse_mode='Markdown')
 
@@ -1577,7 +1629,7 @@ async def handle_changelog(query, data: str, context):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
         else:
             await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
 
@@ -1589,7 +1641,7 @@ async def handle_changelog(query, data: str, context):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown')
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown')
         else:
             await query.edit_message_text(texto, parse_mode='Markdown')
 
@@ -1632,7 +1684,7 @@ async def handle_changelog(query, data: str, context):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
         else:
             await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
 
@@ -1757,10 +1809,11 @@ async def mostrar_tarefa(query, tarefa_id: int):
 
     # Se tem imagem, envia como caption
     if tarefa['imagem_file_id']:
-        # Deletar mensagem anterior e enviar nova com foto
+        # Deletar mensagem anterior e enviar nova com foto no tópico correto
         chat_id = query.message.chat_id
         await query.message.delete()
-        await query.get_bot().send_photo(
+        await enviar_foto_no_topico(
+            bot=query.get_bot(),
             chat_id=chat_id,
             photo=tarefa['imagem_file_id'],
             caption=texto,
