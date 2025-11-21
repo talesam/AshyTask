@@ -803,7 +803,7 @@ async def menu_changelog(update_or_query, is_command=True):
         if update_or_query.message.photo:
             chat_id = update_or_query.message.chat_id
             await update_or_query.message.delete()
-            await update_or_query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
+            await enviar_mensagem_no_topico(bot=update_or_query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=keyboard)
         else:
             await update_or_query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
 
@@ -1498,7 +1498,8 @@ _Escolha uma das opções abaixo para navegar:_
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(
+            await enviar_mensagem_no_topico(
+                bot=query.get_bot(),
                 chat_id=chat_id,
                 text=texto,
                 parse_mode='Markdown',
@@ -1559,7 +1560,7 @@ async def handle_changelog(query, data: str, context):
             if query.message.photo:
                 chat_id = query.message.chat_id
                 await query.message.delete()
-                await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown')
+                await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown')
             else:
                 await query.edit_message_text(texto, parse_mode='Markdown')
             await query.answer("✍️ Digite a descrição do changelog...")
@@ -1657,7 +1658,7 @@ async def handle_changelog(query, data: str, context):
         if query.message.photo:
             chat_id = query.message.chat_id
             await query.message.delete()
-            await query.get_bot().send_message(chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
         else:
             await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -1853,7 +1854,8 @@ async def confirmar_delecao(query, tarefa_id: int):
     if query.message.photo:
         chat_id = query.message.chat_id
         await query.message.delete()
-        await query.get_bot().send_message(
+        await enviar_mensagem_no_topico(
+            bot=query.get_bot(),
             chat_id=chat_id,
             text=texto,
             parse_mode='Markdown',
@@ -1888,7 +1890,8 @@ async def mostrar_opcoes_edicao(query, tarefa_id: int):
     if query.message.photo:
         chat_id = query.message.chat_id
         await query.message.delete()
-        await query.get_bot().send_message(
+        await enviar_mensagem_no_topico(
+            bot=query.get_bot(),
             chat_id=chat_id,
             text=texto,
             parse_mode='Markdown',
@@ -1918,10 +1921,11 @@ async def mostrar_comentarios(query, tarefa_id: int):
 
     # Verificar se a mensagem tem foto (não tem texto para editar)
     if query.message.photo:
-        # Se tem foto, deletar e enviar nova mensagem de texto
+        # Se tem foto, deletar e enviar nova mensagem de texto no tópico correto
         chat_id = query.message.chat_id
         await query.message.delete()
-        await query.get_bot().send_message(
+        await enviar_mensagem_no_topico(
+            bot=query.get_bot(),
             chat_id=chat_id,
             text=texto,
             parse_mode='Markdown',
@@ -1980,7 +1984,8 @@ async def iniciar_adicionar_comentario(query, tarefa_id: int):
     if query.message.photo:
         chat_id = query.message.chat_id
         await query.message.delete()
-        await query.get_bot().send_message(
+        await enviar_mensagem_no_topico(
+            bot=query.get_bot(),
             chat_id=chat_id,
             text=texto,
             parse_mode='Markdown',
