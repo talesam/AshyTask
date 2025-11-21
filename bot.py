@@ -1,6 +1,7 @@
 import logging
 import warnings
 import os
+from typing import Dict
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -31,6 +32,9 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Versão do bot
+VERSION = "1.0.3"
 
 # Estados da conversação para criar tarefa
 TITULO, DESCRICAO, CATEGORIA, PRIORIDADE, IMAGEM = range(5)
@@ -78,13 +82,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /start"""
     # Verificar tópico
     if not await verificar_topico(update):
-        topico_id = db.obter_config('topico_permitido')
-        await update.message.reply_text(
-            f"⚠️ *Uso restrito*\n\n"
-            f"Este bot só funciona no tópico configurado (ID: `{topico_id}`).\n"
-            f"Por favor, use os comandos dentro do tópico apropriado.",
-            parse_mode='Markdown'
-        )
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
         return
 
     user = update.effective_user
@@ -92,7 +92,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = f"""
 👋 Olá {user.first_name}!
 
-Bem-vindo ao *BigCommunity Task Manager*! 🚀
+Bem-vindo ao *Ashy Task* v{VERSION}! 🚀
 
 Este bot ajuda a organizar as tarefas da equipe de desenvolvimento.
 
@@ -120,17 +120,15 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /ajuda"""
     # Verificar tópico
     if not await verificar_topico(update):
-        topico_id = db.obter_config('topico_permitido')
-        await update.message.reply_text(
-            f"⚠️ *Uso restrito*\n\n"
-            f"Este bot só funciona no tópico configurado (ID: `{topico_id}`).\n"
-            f"Por favor, use os comandos dentro do tópico apropriado.",
-            parse_mode='Markdown'
-        )
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
         return
 
-    texto = """
-*📋 Comandos disponíveis:*
+    texto = f"""
+*📋 Ashy Task v{VERSION}*
+
+*Comandos disponíveis:*
 
 /nova - Criar uma nova tarefa
 /tarefas - Listar todas as tarefas
@@ -182,19 +180,15 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /stats - mostra estatísticas"""
     # Verificar tópico
     if not await verificar_topico(update):
-        topico_id = db.obter_config('topico_permitido')
-        await update.message.reply_text(
-            f"⚠️ *Uso restrito*\n\n"
-            f"Este bot só funciona no tópico configurado (ID: `{topico_id}`).\n"
-            f"Por favor, use os comandos dentro do tópico apropriado.",
-            parse_mode='Markdown'
-        )
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
         return
 
     stats = db.estatisticas()
 
     texto = f"""
-📊 *Estatísticas do BigCommunity*
+📊 *Estatísticas do Ashy Task*
 
 📋 Total de tarefas: `{stats['total']}`
 
@@ -239,33 +233,88 @@ Por favor, execute-o dentro do tópico desejado.
 
 async def settopico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /settopico - configura o tópico permitido para o bot"""
+    message = update.message
+
     if not context.args:
-        await update.message.reply_text(
+        await message.reply_text(
             "⚠️ Use: `/settopico <ID_do_tópico>`\n\n"
-            "Para descobrir o ID, use /topicoid dentro do tópico desejado.",
+            "Para descobrir o ID, use /topicoid dentro do tópico desejado.\n\n"
+            "💡 *Dica:* Execute /settopico no próprio tópico onde deseja configurar o bot!",
             parse_mode='Markdown'
         )
         return
 
     try:
         topic_id = context.args[0]
-        db.salvar_config('topico_permitido', topic_id)
+
+        # Se é "off", desabilita
+        if topic_id.lower() == 'off':
+            db.salvar_config('topico_permitido', 'off')
+            await message.reply_text(
+                "✅ Restrição de tópico desabilitada!\n\nO bot agora responderá em qualquer tópico.",
+                parse_mode='Markdown'
+            )
+            return
+
+        # Capturar informações do tópico atual
+        topico_nome = "Tópico Configurado"
+        chat_id = str(message.chat_id)
+
+        # Se a mensagem é de um tópico, pegar o nome
+        if message.is_topic_message:
+            # Tentar pegar o nome do tópico (disponível em alguns casos)
+            if hasattr(message, 'forum_topic_created'):
+                topico_nome = message.forum_topic_created.name
+            elif hasattr(message, 'reply_to_message') and message.reply_to_message:
+                topico_nome = f"Tópico #{topic_id}"
+            else:
+                topico_nome = f"Tópico #{topic_id}"
+
+        # Salvar informações completas do tópico
+        db.salvar_info_topico(topic_id, topico_nome, chat_id)
 
         texto = f"""
 ✅ *Tópico configurado com sucesso!*
 
-📌 ID do tópico permitido: `{topic_id}`
+📌 Tópico: *{topico_nome}*
+🆔 ID: `{topic_id}`
 
 O bot agora só responderá comandos neste tópico.
 Para desabilitar, use: `/settopico off`
 """
-        await update.message.reply_text(texto, parse_mode='Markdown')
+        await message.reply_text(texto, parse_mode='Markdown')
     except Exception as e:
-        await update.message.reply_text(
+        await message.reply_text(
             f"❌ Erro ao configurar tópico: {str(e)}",
             parse_mode='Markdown'
         )
 
+
+def criar_link_topico(chat_id: str, topic_id: str) -> str:
+    """Cria um link clicável para o tópico"""
+    # Remove o prefixo -100 do chat_id para criar o link
+    chat_id_clean = chat_id.replace('-100', '')
+    return f"https://t.me/c/{chat_id_clean}/{topic_id}"
+
+async def obter_mensagem_topico_restrito(topico_info: Dict) -> str:
+    """Cria a mensagem de alerta para tópico restrito"""
+    topico_nome = topico_info.get('nome', 'Tópico Configurado')
+    topico_id = topico_info.get('id', '')
+    chat_id = topico_info.get('chat_id', '')
+
+    if chat_id and topico_id:
+        link_topico = criar_link_topico(chat_id, topico_id)
+        return (
+            f"⚠️ *Uso Restrito*\n\n"
+            f"Este bot só funciona no tópico [📌 {topico_nome}]({link_topico}).\n\n"
+            f"_Clique no nome do tópico acima para ir até lá._"
+        )
+    else:
+        return (
+            f"⚠️ *Uso Restrito*\n\n"
+            f"Este bot só funciona no tópico configurado: *{topico_nome}*\n"
+            f"ID: `{topico_id}`"
+        )
 
 async def verificar_topico(update: Update) -> bool:
     """Verifica se a mensagem está no tópico permitido"""
@@ -293,17 +342,13 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /menu - mostra menu de navegação completo"""
     # Verificar tópico
     if not await verificar_topico(update):
-        topico_id = db.obter_config('topico_permitido')
-        await update.message.reply_text(
-            f"⚠️ *Uso restrito*\n\n"
-            f"Este bot só funciona no tópico configurado (ID: `{topico_id}`).\n"
-            f"Por favor, use os comandos dentro do tópico apropriado.",
-            parse_mode='Markdown'
-        )
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
         return
 
     texto = """
-🏠 *Menu Principal - BigCommunity Task Manager*
+🏠 *Menu Principal - Ashy Task*
 
 _Escolha uma das opções abaixo para navegar:_
 """
@@ -342,13 +387,9 @@ async def nova_tarefa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Inicia o processo de criar nova tarefa"""
     # Verificar tópico
     if not await verificar_topico(update):
-        topico_id = db.obter_config('topico_permitido')
-        await update.message.reply_text(
-            f"⚠️ *Uso restrito*\n\n"
-            f"Este bot só funciona no tópico configurado (ID: `{topico_id}`).\n"
-            f"Por favor, use os comandos dentro do tópico apropriado.",
-            parse_mode='Markdown'
-        )
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
         return ConversationHandler.END
 
     await update.message.reply_text(
@@ -539,6 +580,10 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def processar_mensagem_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processa mensagens de texto para edição inline e comentários"""
+    # Verificar se a mensagem existe
+    if not update.message or not update.message.text:
+        return
+
     texto = update.message.text
 
     # Verificar se está criando categoria de tarefa inline
@@ -694,7 +739,7 @@ async def menu_changelog(update_or_query, is_command=True):
             )
             return
 
-    texto = "📝 *Changelog - BigCommunity*\n\n"
+    texto = "📝 *Changelog - Ashy Task*\n\n"
     texto += "_Gerencie as mudanças e atualizações do projeto:_"
 
     keyboard = menu_changelog_principal()
@@ -839,13 +884,9 @@ async def listar_tarefas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista todas as tarefas com filtros"""
     # Verificar tópico
     if not await verificar_topico(update):
-        topico_id = db.obter_config('topico_permitido')
-        await update.message.reply_text(
-            f"⚠️ *Uso restrito*\n\n"
-            f"Este bot só funciona no tópico configurado (ID: `{topico_id}`).\n"
-            f"Por favor, use os comandos dentro do tópico apropriado.",
-            parse_mode='Markdown'
-        )
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
         return
 
     tarefas = db.listar_tarefas()
@@ -856,7 +897,7 @@ async def listar_tarefas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    texto = "📋 *Tarefas do BigCommunity*\n\n"
+    texto = "📋 *Tarefas do Ashy Task*\n\n"
     texto += "_Use os filtros abaixo para organizar:_\n\n"
 
     # Mostrar resumo
@@ -878,13 +919,9 @@ async def minhas_tarefas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista tarefas do usuário"""
     # Verificar tópico
     if not await verificar_topico(update):
-        topico_id = db.obter_config('topico_permitido')
-        await update.message.reply_text(
-            f"⚠️ *Uso restrito*\n\n"
-            f"Este bot só funciona no tópico configurado (ID: `{topico_id}`).\n"
-            f"Por favor, use os comandos dentro do tópico apropriado.",
-            parse_mode='Markdown'
-        )
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
         return
     user = update.effective_user
     tarefas = db.listar_tarefas(autor_id=user.id)
@@ -1220,7 +1257,7 @@ async def handle_menu(query, data: str, context):
             )
             return
 
-        texto = "📋 *Tarefas do BigCommunity*\n\n"
+        texto = "📋 *Tarefas do Ashy Task*\n\n"
         texto += "_Use os filtros abaixo para organizar:_\n\n"
 
         for status in STATUS:
@@ -1270,7 +1307,7 @@ async def handle_menu(query, data: str, context):
         stats = db.estatisticas()
 
         texto = f"""
-📊 *Estatísticas do BigCommunity*
+📊 *Estatísticas do Ashy Task*
 
 📋 Total de tarefas: `{stats['total']}`
 
@@ -1294,8 +1331,10 @@ async def handle_menu(query, data: str, context):
         )
 
     elif data == "menu_ajuda":
-        texto = """
-*📋 Comandos disponíveis:*
+        texto = f"""
+*📋 Ashy Task v{VERSION}*
+
+*Comandos disponíveis:*
 
 /nova - Criar uma nova tarefa
 /tarefas - Listar todas as tarefas
@@ -1377,7 +1416,7 @@ async def handle_menu(query, data: str, context):
 
     elif data == "menu_voltar":
         texto = """
-🏠 *Menu Principal - BigCommunity Task Manager*
+🏠 *Menu Principal - Ashy Task*
 
 _Escolha uma das opções abaixo para navegar:_
 """
@@ -1848,13 +1887,9 @@ async def adicionar_comentario_cmd(update: Update, context: ContextTypes.DEFAULT
     """Adiciona comentário via comando /comentar"""
     # Verificar tópico
     if not await verificar_topico(update):
-        topico_id = db.obter_config('topico_permitido')
-        await update.message.reply_text(
-            f"⚠️ *Uso restrito*\n\n"
-            f"Este bot só funciona no tópico configurado (ID: `{topico_id}`).\n"
-            f"Por favor, use os comandos dentro do tópico apropriado.",
-            parse_mode='Markdown'
-        )
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
         return
 
     if len(context.args) < 2:
@@ -1914,7 +1949,7 @@ async def voltar_lista(query):
     """Volta para a lista de tarefas com filtros"""
     tarefas = db.listar_tarefas()
     
-    texto = "📋 *Tarefas do BigCommunity*\n\n"
+    texto = "📋 *Tarefas do Ashy Task*\n\n"
     texto += "_Use os filtros abaixo para organizar:_\n\n"
 
     for status in STATUS:
@@ -1986,7 +2021,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, processar_mensagem_texto))
 
     # Iniciar bot
-    logger.info("Bot iniciado!")
+    logger.info(f"🚀 Ashy Task Bot v{VERSION} iniciado!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

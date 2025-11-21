@@ -1,6 +1,6 @@
-# 🤖 Bot de Gerenciamento de Tarefas - BigCommunity
+# 🤖 Ashy Task - Bot de Gerenciamento de Tarefas
 
-Bot para Telegram desenvolvido para gerenciar tarefas do projeto BigCommunity (XFCE, Cinnamon, GNOME).
+Bot para Telegram desenvolvido para gerenciar tarefas de projetos (XFCE, Cinnamon, GNOME, etc.).
 
 ## 📋 Funcionalidades
 
@@ -264,8 +264,8 @@ Sinta-se livre para melhorar o bot! Algumas ideias:
 
 ## 📜 Licença
 
-Código livre para uso no projeto BigCommunity e derivados.
+Código livre para uso em projetos open source.
 
 ---
 
-Desenvolvido com ❤️ para a comunidade BigCommunity
+Desenvolvido com ❤️ por @talesam

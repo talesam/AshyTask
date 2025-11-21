@@ -11,8 +11,8 @@ pip install python-telegram-bot==20.7
 1. Abra o Telegram
 2. Busque por `@BotFather`
 3. Envie `/newbot`
-4. Escolha um nome: `BigCommunity Tasks`
-5. Escolha um username: `bigcommunity_tasks_bot` (ou outro disponível)
+4. Escolha um nome: `Ashy Task`
+5. Escolha um username: `ashy_task_bot` (ou outro disponível)
 6. **COPIE O TOKEN** que o BotFather enviar
 
 ## Passo 3: Configurar o token
