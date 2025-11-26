@@ -89,6 +89,7 @@ def selecionar_categoria_nova_tarefa(categorias):
         keyboard.append([
             InlineKeyboardButton(cat['nome'], callback_data=f"newcat_{cat['id']}")
         ])
+    keyboard.append([InlineKeyboardButton("➕ Nova Categoria", callback_data="nova_categoria_inline")])
     keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_nova")])
     return InlineKeyboardMarkup(keyboard)
 

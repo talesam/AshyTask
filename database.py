@@ -227,17 +227,45 @@ class Database:
         """Atualiza o status de uma tarefa"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        
+
         data_conclusao = None
         if status == "concluido":
             data_conclusao = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+
+            # Buscar dados da tarefa para criar changelog
+            cursor.execute("""
+                SELECT t.titulo, t.descricao, t.prioridade, t.autor_id, t.autor_nome, c.nome as categoria
+                FROM tarefas t
+                LEFT JOIN categorias c ON t.categoria_id = c.id
+                WHERE t.id = ?
+            """, (tarefa_id,))
+
+            tarefa_data = cursor.fetchone()
+            if tarefa_data:
+                titulo, descricao, prioridade, autor_id, autor_nome, categoria = tarefa_data
+
+                # Formatar descrição do changelog
+                prioridade_emoji = {"alta": "🔴", "media": "🟡", "baixa": "🟢"}.get(prioridade, "⚪")
+
+                changelog_descricao = f"✅ **{titulo}**\n\n"
+                if descricao:
+                    changelog_descricao += f"📄 {descricao}\n\n"
+                changelog_descricao += f"⚡ Prioridade: {prioridade_emoji} {prioridade.capitalize()}"
+
+                # Criar changelog automaticamente
+                self.criar_changelog(
+                    categoria=categoria or "Geral",
+                    descricao=changelog_descricao,
+                    autor_id=autor_id,
+                    autor_nome=autor_nome
+                )
+
         cursor.execute("""
-            UPDATE tarefas 
+            UPDATE tarefas
             SET status = ?, data_conclusao = ?
             WHERE id = ?
         """, (status, data_conclusao, tarefa_id))
-        
+
         success = cursor.rowcount > 0
         conn.commit()
         conn.close()

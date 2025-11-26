@@ -34,19 +34,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.0.3"
+VERSION = "1.1.3"
 
 # Estados da conversação para criar tarefa
-TITULO, DESCRICAO, CATEGORIA, PRIORIDADE, IMAGEM = range(5)
+TITULO, DESCRICAO, CATEGORIA, PRIORIDADE, IMAGEM, NOVA_CATEGORIA_INLINE = range(6)
 
 # Estados para edição
-EDIT_TITULO, EDIT_DESCRICAO, EDIT_CATEGORIA, EDIT_PRIORIDADE, EDIT_IMAGEM = range(5, 10)
+EDIT_TITULO, EDIT_DESCRICAO, EDIT_CATEGORIA, EDIT_PRIORIDADE, EDIT_IMAGEM = range(6, 11)
 
 # Estado para comentário
-ADD_COMENTARIO = 10
+ADD_COMENTARIO = 11
 
 # Estados para changelog
-CHANGELOG_CATEGORIA, CHANGELOG_DESCRICAO = range(11, 13)
+CHANGELOG_CATEGORIA, CHANGELOG_DESCRICAO = range(12, 14)
 
 # Inicializar banco de dados
 db = Database()
@@ -480,11 +480,28 @@ async def receber_descricao(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receber_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Recebe a categoria via callback"""
     query = update.callback_query
+
+    print(f"\n[DEBUG receber_categoria] FUNÇÃO CHAMADA! Callback: {query.data}\n")
+    logger.info(f"[receber_categoria] Callback recebido: {query.data}")
+
     await query.answer()
 
     if query.data == "cancelar_nova":
         await query.edit_message_text("❌ Criação de tarefa cancelada.")
         return ConversationHandler.END
+
+    if query.data == "nova_categoria_inline":
+        logger.info("Detectado clique em Nova Categoria")
+        try:
+            await query.edit_message_text(
+                "➕ *Nova Categoria*\n\n_Digite o nome da nova categoria:_",
+                parse_mode='Markdown'
+            )
+            logger.info("Mensagem editada com sucesso")
+            return NOVA_CATEGORIA_INLINE
+        except Exception as e:
+            logger.error(f"Erro ao editar mensagem: {e}")
+            raise
 
     # Extrai o ID da categoria (formato: newcat_ID)
     categoria_id = int(query.data.replace("newcat_", ""))
@@ -502,6 +519,28 @@ async def receber_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard
     )
     return PRIORIDADE
+
+
+async def receber_nova_categoria_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Recebe o nome da nova categoria e retorna ao menu de seleção"""
+    nome_categoria = update.message.text.strip()
+
+    # Adicionar categoria ao banco
+    if db.adicionar_categoria(nome_categoria):
+        mensagem = f"✅ Categoria '*{nome_categoria}*' criada com sucesso!\n\n📁 Selecione a categoria:"
+    else:
+        mensagem = f"⚠️ Categoria '*{nome_categoria}*' já existe.\n\n📁 Selecione a categoria:"
+
+    # Buscar categorias atualizadas e mostrar menu novamente
+    categorias = db.listar_categorias()
+    keyboard = selecionar_categoria_nova_tarefa(categorias)
+
+    await update.message.reply_text(
+        mensagem,
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
+    return CATEGORIA
 
 
 async def receber_prioridade(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -677,6 +716,27 @@ async def processar_mensagem_texto(update: Update, context: ContextTypes.DEFAULT
         keyboard = selecionar_categoria_nova_tarefa(categorias)
         await update.message.reply_text(
             "📁 Selecione a categoria:",
+            reply_markup=keyboard
+        )
+        context.user_data['aguardando'] = 'categoria_tarefa'
+        return
+
+    # Processar nome de nova categoria durante criação de tarefa
+    if context.user_data.get('aguardando') == 'nome_nova_categoria':
+        nome_categoria = texto.strip()
+
+        if db.adicionar_categoria(nome_categoria):
+            mensagem = f"✅ Categoria '*{nome_categoria}*' criada com sucesso!\n\n📁 Selecione a categoria:"
+        else:
+            mensagem = f"⚠️ Categoria '*{nome_categoria}*' já existe.\n\n📁 Selecione a categoria:"
+
+        # Mostrar menu de categorias atualizado
+        categorias = db.listar_categorias()
+        keyboard = selecionar_categoria_nova_tarefa(categorias)
+
+        await update.message.reply_text(
+            mensagem,
+            parse_mode='Markdown',
             reply_markup=keyboard
         )
         context.user_data['aguardando'] = 'categoria_tarefa'
@@ -1031,9 +1091,11 @@ def formatar_tarefa(tarefa: dict) -> str:
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler principal para callbacks dos botões inline"""
     query = update.callback_query
-    await query.answer()
-
     data = query.data
+
+    print(f"\n[DEBUG callback_handler] FUNÇÃO CHAMADA! Callback: {data}\n")
+    logger.info(f"[callback_handler] Callback recebido: {data}")
+    await query.answer()
 
     # Filtros de listagem
     if data.startswith("filtro_"):
@@ -1207,6 +1269,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Voltar ao menu principal
     elif data == "voltar_menu":
         await handle_menu(query, "menu_voltar", context)
+        return
+
+    # Nova categoria inline durante criação de tarefa
+    elif data == "nova_categoria_inline" and context.user_data.get('aguardando') == 'categoria_tarefa':
+        await query.edit_message_text(
+            "➕ *Nova Categoria*\n\n_Digite o nome da nova categoria:_",
+            parse_mode='Markdown'
+        )
+        context.user_data['aguardando'] = 'nome_nova_categoria'
         return
 
     # Seleção de categoria para nova tarefa inline
@@ -2061,6 +2132,7 @@ def main():
             TITULO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_titulo)],
             DESCRICAO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_descricao)],
             CATEGORIA: [CallbackQueryHandler(receber_categoria)],
+            NOVA_CATEGORIA_INLINE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nova_categoria_inline)],
             PRIORIDADE: [CallbackQueryHandler(receber_prioridade)],
             IMAGEM: [
                 MessageHandler(filters.PHOTO, receber_imagem),
@@ -2070,10 +2142,10 @@ def main():
         fallbacks=[CommandHandler("cancelar", cancelar)],
     )
     
-    application.add_handler(conv_handler)
+    application.add_handler(conv_handler, group=0)
 
-    # Handler de callbacks
-    application.add_handler(CallbackQueryHandler(callback_handler))
+    # Handler de callbacks (group=1 para processar depois do ConversationHandler)
+    application.add_handler(CallbackQueryHandler(callback_handler), group=1)
 
     # Handler para capturar mensagens de texto (edição inline e comentários)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, processar_mensagem_texto))
