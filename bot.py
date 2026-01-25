@@ -1,6 +1,7 @@
 import logging
 import warnings
 import os
+import tempfile
 from typing import Dict, Optional
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -34,7 +35,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.1.3"
+VERSION = "1.5.0"
+
+# Carregar IDs dos administradores
+admin_ids_str = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS = [int(id.strip()) for id in admin_ids_str.split(",") if id.strip()]
 
 # Estados da conversação para criar tarefa
 TITULO, DESCRICAO, CATEGORIA, PRIORIDADE, IMAGEM, NOVA_CATEGORIA_INLINE = range(6)
@@ -990,6 +995,253 @@ async def processar_changelog_texto(update: Update, context: ContextTypes.DEFAUL
         return
 
 
+# ============ EXPORTAÇÃO DE CHANGELOG ============
+
+# Cores por categoria (paleta harmoniosa)
+CORES_CATEGORIA = {
+    "Ashy Terminal": "#3498db",  # Azul
+    "GNOME": "#9b59b6",          # Roxo
+    "XFCE": "#27ae60",           # Verde
+    "Cinnamon": "#e67e22",       # Laranja
+    "All": "#1abc9c",            # Turquesa
+    "Geral": "#95a5a6",          # Cinza
+}
+
+
+def gerar_html_changelog(changelogs: list, titulo: str = "Changelog - Ashy Task") -> str:
+    """Gera HTML com formatação colorida para changelogs"""
+    
+    html = f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{titulo}</title>
+    <style>
+        @page {{
+            size: A4;
+            margin: 2cm;
+        }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e8e8e8;
+            min-height: 100vh;
+            padding: 20px;
+        }}
+        .container {{
+            max-width: 900px;
+            margin: 0 auto;
+        }}
+        h1 {{
+            text-align: center;
+            color: #00d4ff;
+            margin-bottom: 30px;
+            font-size: 2.2em;
+            text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+        }}
+        .stats {{
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px 25px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+        }}
+        .stat-item {{
+            text-align: center;
+            padding: 10px;
+        }}
+        .stat-number {{
+            font-size: 2em;
+            font-weight: bold;
+            color: #00d4ff;
+        }}
+        .changelog-item {{
+            background: rgba(255, 255, 255, 0.05);
+            border-left: 4px solid;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            page-break-inside: avoid;
+        }}
+        .changelog-item.pinned {{
+            background: rgba(255, 215, 0, 0.1);
+            border-left-width: 6px;
+        }}
+        .changelog-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }}
+        .categoria {{
+            font-weight: bold;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+        }}
+        .pin-badge {{
+            background: #ffd700;
+            color: #1a1a2e;
+            padding: 3px 10px;
+            border-radius: 15px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }}
+        .meta {{
+            color: #888;
+            font-size: 0.85em;
+            margin-bottom: 10px;
+        }}
+        .descricao {{
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }}
+        .footer {{
+            text-align: center;
+            margin-top: 40px;
+            color: #666;
+            font-size: 0.9em;
+            padding-top: 20px;
+            border-top: 1px solid #333;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📝 {titulo}</h1>
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-number">{len(changelogs)}</div>
+                <div>Total</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">{len([c for c in changelogs if c['pinado']])}</div>
+                <div>📌 Pinados</div>
+            </div>
+        </div>
+"""
+    
+    for log in changelogs:
+        cor = CORES_CATEGORIA.get(log['categoria'], '#666666')
+        pinado_class = "pinned" if log['pinado'] else ""
+        pinado_badge = '<span class="pin-badge">📌 PINADO</span>' if log['pinado'] else ""
+        data = datetime.fromisoformat(log['data_criacao']).strftime('%d/%m/%Y às %H:%M')
+        
+        # Escapar HTML na descrição
+        descricao_safe = log['descricao'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        
+        html += f"""
+        <div class="changelog-item {pinado_class}" style="border-left-color: {cor};">
+            <div class="changelog-header">
+                <span class="categoria" style="background: {cor}20; color: {cor};">{log['categoria']}</span>
+                {pinado_badge}
+            </div>
+            <div class="meta">
+                📅 {data} | 👤 {log['autor_nome']} | 🆔 #{log['id']}
+            </div>
+            <div class="descricao">{descricao_safe}</div>
+        </div>
+"""
+    
+    html += f"""
+        <div class="footer">
+            Gerado por Ashy Task Bot em {datetime.now().strftime('%d/%m/%Y às %H:%M')}
+        </div>
+    </div>
+</body>
+</html>"""
+    
+    return html
+
+
+async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titulo: str = "Changelog"):
+    """Exporta changelogs para arquivo HTML ou PDF e envia ao usuário"""
+    
+    if not changelogs:
+        await query.answer("❌ Nenhum changelog para exportar!", show_alert=True)
+        return
+    
+    # Gerar HTML
+    html_content = gerar_html_changelog(changelogs, titulo)
+    
+    # Mensagem de aguarde
+    await query.answer("⏳ Gerando arquivo...")
+    
+    try:
+        if formato == "html":
+            # Salvar como HTML
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                f.write(html_content)
+                temp_path = f.name
+            
+            # Enviar arquivo
+            with open(temp_path, 'rb') as f:
+                await query.message.reply_document(
+                    document=f,
+                    filename=f"changelog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                    caption=f"📄 *{titulo}*\n\n✅ {len(changelogs)} changelog(s) exportado(s) em HTML",
+                    parse_mode='Markdown'
+                )
+            
+            # Limpar arquivo temporário
+            os.unlink(temp_path)
+            
+        elif formato == "pdf":
+            try:
+                from weasyprint import HTML
+                
+                # Gerar PDF
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+                    temp_path = f.name
+                
+                HTML(string=html_content).write_pdf(temp_path)
+                
+                # Enviar arquivo
+                with open(temp_path, 'rb') as f:
+                    await query.message.reply_document(
+                        document=f,
+                        filename=f"changelog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        caption=f"📕 *{titulo}*\n\n✅ {len(changelogs)} changelog(s) exportado(s) em PDF",
+                        parse_mode='Markdown'
+                    )
+                
+                # Limpar arquivo temporário
+                os.unlink(temp_path)
+                
+            except ImportError:
+                await query.message.reply_text(
+                    "❌ *Erro:* Biblioteca `weasyprint` não instalada.\n\n"
+                    "Instale com: `pip install weasyprint`",
+                    parse_mode='Markdown'
+                )
+                return
+            except Exception as e:
+                logger.error(f"Erro ao gerar PDF: {e}")
+                await query.message.reply_text(
+                    f"❌ *Erro ao gerar PDF:* {str(e)}",
+                    parse_mode='Markdown'
+                )
+                return
+        
+        # Atualizar mensagem original
+        keyboard = [[InlineKeyboardButton("🔙 Menu Changelog", callback_data="changelog_menu")]]
+        await query.edit_message_text(
+            f"✅ *Exportação concluída!*\n\n📁 Arquivo enviado acima.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"Erro na exportação: {e}")
+        await query.message.reply_text(f"❌ Erro na exportação: {str(e)}")
+
+
 # ============ LISTAR E VISUALIZAR TAREFAS ============
 
 async def listar_tarefas(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1060,6 +1312,18 @@ async def minhas_tarefas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(texto, parse_mode='Markdown')
 
 
+def escape_markdown(text: str) -> str:
+    """Escapa caracteres especiais do Markdown para evitar erros de parsing"""
+    if not text:
+        return text
+    # Para Markdown simples do Telegram, só escapar: _ * ` [
+    # Não usa MarkdownV2, então não precisa escapar tantos caracteres
+    escape_chars = ['_', '*', '`', '[']
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
 def formatar_tarefa(tarefa: dict) -> str:
     """Formata uma tarefa para exibição"""
     emoji_status = STATUS_EMOJI.get(tarefa['status'], '📌')
@@ -1067,9 +1331,13 @@ def formatar_tarefa(tarefa: dict) -> str:
     status_nome = tarefa['status'].replace('_', ' ').title()
     prioridade_nome = tarefa['prioridade'].title()
 
+    # Escapar título e descrição para evitar erros de parsing Markdown
+    titulo_safe = escape_markdown(tarefa['titulo'])
+    descricao_safe = escape_markdown(tarefa['descricao'])
+
     texto = f"*Tarefa #{tarefa['id']}*\n\n"
-    texto += f"📝 *Título:* {tarefa['titulo']}\n"
-    texto += f"📄 *Descrição:* {tarefa['descricao']}\n\n"
+    texto += f"📝 *Título:* {titulo_safe}\n"
+    texto += f"📄 *Descrição:* {descricao_safe}\n\n"
     texto += f"📁 *Categoria:* `{tarefa['categoria']}`\n"
     texto += f"{emoji_status} *Status:* `{status_nome}`\n"
     texto += f"{emoji_pri} *Prioridade:* `{prioridade_nome}`\n"
@@ -1099,6 +1367,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Filtros de listagem
     if data.startswith("filtro_"):
+        await handle_filtro(query, context)
+        return
+
+    # Paginação de tarefas
+    elif data.startswith("pag_"):
         await handle_filtro(query, context)
         return
 
@@ -1343,8 +1616,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(texto, parse_mode='Markdown')
         return
 
-    # Changelog
-    elif data.startswith("changelog_") or data.startswith("newlog_"):
+    # Changelog e Exportação
+    elif data.startswith("changelog_") or data.startswith("newlog_") or data.startswith("export_") or data.startswith("formato_"):
         await handle_changelog(query, data, context)
         return
 
@@ -1770,6 +2043,76 @@ async def handle_changelog(query, data: str, context):
             ]])
         )
 
+    # ============ EXPORTAÇÃO DE CHANGELOG ============
+
+    elif data == "changelog_exportar":
+        # Menu de opções de exportação
+        texto = "📤 *Exportar Changelog*\n\n_Selecione o que deseja exportar:_"
+        keyboard = menu_exportar_changelog()
+        await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif data == "export_todos":
+        # Exportar todos - escolher formato
+        context.user_data['export_filtro'] = 'todos'
+        texto = "📤 *Exportar Todos os Changelogs*\n\n_Escolha o formato:_"
+        keyboard = menu_formato_exportacao("todos")
+        await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif data == "export_pinados":
+        # Exportar pinados - escolher formato
+        context.user_data['export_filtro'] = 'pinados'
+        texto = "📤 *Exportar Changelogs Pinados*\n\n_Escolha o formato:_"
+        keyboard = menu_formato_exportacao("pinados")
+        await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif data == "export_categorias":
+        # Mostrar lista de categorias para exportar
+        texto = "📤 *Exportar por Categoria*\n\n_Selecione a categoria:_"
+        categorias = db.listar_categorias_changelog()
+        keyboard = menu_exportar_categoria_changelog(categorias)
+        await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif data.startswith("export_cat_"):
+        # Categoria selecionada para exportar - escolher formato
+        idx = int(data.replace("export_cat_", ""))
+        categorias = db.listar_categorias_changelog()
+        if idx < len(categorias):
+            categoria = categorias[idx]
+            context.user_data['export_filtro'] = f'categoria_{categoria}'
+            texto = f"📤 *Exportar Categoria: {categoria}*\n\n_Escolha o formato:_"
+            keyboard = menu_formato_exportacao(f"cat_{idx}")
+            await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif data.startswith("formato_html_") or data.startswith("formato_pdf_"):
+        # Processar exportação
+        parts = data.split("_")
+        formato = parts[1]  # html ou pdf
+        filtro_tipo = "_".join(parts[2:])  # todos, pinados, ou cat_X
+        
+        # Obter changelogs baseado no filtro
+        if filtro_tipo == "todos":
+            changelogs = db.listar_changelogs()
+            titulo = "Changelog Completo - Ashy Task"
+        elif filtro_tipo == "pinados":
+            changelogs = db.listar_changelogs(pinado=True)
+            titulo = "Changelogs Pinados - Ashy Task"
+        elif filtro_tipo.startswith("cat_"):
+            idx = int(filtro_tipo.replace("cat_", ""))
+            categorias = db.listar_categorias_changelog()
+            if idx < len(categorias):
+                categoria = categorias[idx]
+                changelogs = db.listar_changelogs(categoria=categoria)
+                titulo = f"Changelog - {categoria}"
+            else:
+                await query.answer("❌ Categoria inválida!", show_alert=True)
+                return
+        else:
+            changelogs = db.listar_changelogs()
+            titulo = "Changelog - Ashy Task"
+        
+        # Exportar
+        await exportar_changelog_arquivo(query, changelogs, formato, titulo)
+
 
 async def mostrar_lista_filtrada(query, tarefas, titulo: str):
     """Mostra lista de tarefas filtrada"""
@@ -1803,24 +2146,55 @@ async def mostrar_lista_filtrada(query, tarefas, titulo: str):
 
 
 async def handle_filtro(query, context):
-    """Processa filtros de tarefas"""
+    """Processa filtros de tarefas com paginação"""
     data = query.data
     
+    # Configuração de paginação
+    TAREFAS_POR_PAGINA = 10
+    pagina = 0
+    filtro_tipo = None
+    filtro_valor = None
+    
+    # Verificar se é navegação de página
+    if data.startswith("pag_"):
+        parts = data.split("_")
+        pagina = int(parts[1])
+        filtro_tipo = parts[2]
+        filtro_valor = "_".join(parts[3:]) if len(parts) > 3 else None
+        
+        # Reconstruir filtro
+        if filtro_tipo == "cat":
+            tarefas = db.listar_tarefas(categoria=filtro_valor if filtro_valor != "Todas" else None)
+            titulo = f"📁 Categoria: {filtro_valor}"
+        elif filtro_tipo == "status":
+            tarefas = db.listar_tarefas(status=filtro_valor)
+            status_nome = filtro_valor.replace('_', ' ').title()
+            titulo = f"{STATUS_EMOJI.get(filtro_valor, '📌')} Status: {status_nome}"
+        else:
+            tarefas = db.listar_tarefas()
+            titulo = "📋 Todas as tarefas"
+    
     # Extrair filtro
-    if "filtro_cat_" in data:
+    elif "filtro_cat_" in data:
         categoria = data.replace("filtro_cat_", "")
         tarefas = db.listar_tarefas(categoria=categoria if categoria != "Todas" else None)
         titulo = f"📁 Categoria: {categoria}"
+        filtro_tipo = "cat"
+        filtro_valor = categoria
     
     elif "filtro_status_" in data:
         status = data.replace("filtro_status_", "")
         tarefas = db.listar_tarefas(status=status)
         status_nome = status.replace('_', ' ').title()
         titulo = f"{STATUS_EMOJI.get(status, '📌')} Status: {status_nome}"
+        filtro_tipo = "status"
+        filtro_valor = status
     
     elif data == "filtro_refresh":
         tarefas = db.listar_tarefas()
         titulo = "📋 Todas as tarefas"
+        filtro_tipo = "all"
+        filtro_valor = ""
 
     elif data == "filtro_categorias":
         # Mostrar menu de categorias
@@ -1843,16 +2217,34 @@ async def handle_filtro(query, context):
         )
         return
     
+    # Calcular paginação
+    total_tarefas = len(tarefas)
+    total_paginas = (total_tarefas + TAREFAS_POR_PAGINA - 1) // TAREFAS_POR_PAGINA
+    inicio = pagina * TAREFAS_POR_PAGINA
+    fim = min(inicio + TAREFAS_POR_PAGINA, total_tarefas)
+    tarefas_pagina = tarefas[inicio:fim]
+    
     # Mostrar lista de tarefas
-    texto = f"*{titulo}*\n\n"
+    texto = f"*{titulo}*\n"
+    texto += f"📄 Página {pagina + 1}/{total_paginas} ({total_tarefas} tarefas)\n\n"
     
     buttons = []
-    for tarefa in tarefas[:20]:  # Limita a 20
+    for tarefa in tarefas_pagina:
         emoji_status = STATUS_EMOJI.get(tarefa['status'], '📌')
         emoji_pri = PRIORIDADE_EMOJI.get(tarefa['prioridade'], '🟡')
         
         label = f"{emoji_status} {emoji_pri} #{tarefa['id']} - {tarefa['titulo'][:30]}"
         buttons.append([InlineKeyboardButton(label, callback_data=f"ver_{tarefa['id']}")])
+    
+    # Botões de navegação
+    nav_buttons = []
+    if pagina > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"pag_{pagina-1}_{filtro_tipo}_{filtro_valor or ''}"))
+    if pagina < total_paginas - 1:
+        nav_buttons.append(InlineKeyboardButton("➡️ Próximo", callback_data=f"pag_{pagina+1}_{filtro_tipo}_{filtro_valor or ''}"))
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
     
     buttons.append([InlineKeyboardButton("🔙 Voltar aos filtros", callback_data="voltar_filtros")])
     
@@ -2095,6 +2487,55 @@ async def voltar_lista(query):
     )
 
 
+# ============ COMANDOS DE ADMIN ============
+
+async def admin_deletar_tarefa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Deleta qualquer tarefa (comando apenas para admins)"""
+    user = update.effective_user
+    
+    # Verificar se é admin
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "❌ *Acesso negado*\n\nEste comando é apenas para administradores.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Verificar argumentos
+    if not context.args:
+        await update.message.reply_text(
+            "❌ *Uso incorreto*\n\nUse: `/deletetarefa [id]`\n\n*Exemplo:* `/deletetarefa 39`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        tarefa_id = int(context.args[0])
+        
+        # Verificar se tarefa existe
+        tarefa = db.obter_tarefa(tarefa_id)
+        if not tarefa:
+            await update.message.reply_text(f"❌ Tarefa #{tarefa_id} não encontrada.")
+            return
+        
+        # Deletar tarefa
+        db.deletar_tarefa(tarefa_id)
+        
+        # Escapar título para evitar erro de parsing
+        titulo_safe = escape_markdown(tarefa['titulo'])
+        
+        await update.message.reply_text(
+            f"✅ *Tarefa #{tarefa_id} deletada com sucesso!*\n\n"
+            f"📝 Título: {titulo_safe}\n"
+            f"👤 Autor: {tarefa['autor_nome']}",
+            parse_mode='Markdown'
+        )
+        logger.info(f"[ADMIN] Tarefa #{tarefa_id} deletada por {user.first_name} (ID: {user.id})")
+        
+    except ValueError:
+        await update.message.reply_text("❌ ID inválido. Use um número inteiro.")
+
+
 # ============ MAIN ============
 
 def main():
@@ -2124,6 +2565,7 @@ def main():
     application.add_handler(CommandHandler("addcategoria", handlers.adicionar_categoria))
     application.add_handler(CommandHandler("topicoid", topicoid))
     application.add_handler(CommandHandler("settopico", settopico))
+    application.add_handler(CommandHandler("deletetarefa", admin_deletar_tarefa))
     
     # ConversationHandler para criar nova tarefa
     conv_handler = ConversationHandler(

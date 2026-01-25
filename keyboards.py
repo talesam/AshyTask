@@ -185,6 +185,7 @@ def menu_changelog_principal():
             InlineKeyboardButton("🖥️ Por Categoria", callback_data="changelog_categorias"),
             InlineKeyboardButton("📊 Estatísticas", callback_data="changelog_stats")
         ],
+        [InlineKeyboardButton("📤 Exportar", callback_data="changelog_exportar")],
         [InlineKeyboardButton("🔙 Voltar ao Menu", callback_data="menu_voltar")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -250,3 +251,37 @@ def confirmar_delecao_changelog(changelog_id: int):
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+
+# ============ EXPORTAÇÃO DE CHANGELOG ============
+
+def menu_exportar_changelog():
+    """Menu de opções de exportação de changelog"""
+    keyboard = [
+        [InlineKeyboardButton("📋 Exportar Todos", callback_data="export_todos")],
+        [InlineKeyboardButton("📌 Exportar Pinados", callback_data="export_pinados")],
+        [InlineKeyboardButton("🖥️ Exportar por Categoria", callback_data="export_categorias")],
+        [InlineKeyboardButton("🔙 Voltar", callback_data="changelog_menu")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def menu_formato_exportacao(filtro: str):
+    """Menu para escolher formato de exportação (HTML ou PDF)"""
+    keyboard = [
+        [InlineKeyboardButton("📄 HTML", callback_data=f"formato_html_{filtro}")],
+        [InlineKeyboardButton("📕 PDF", callback_data=f"formato_pdf_{filtro}")],
+        [InlineKeyboardButton("🔙 Voltar", callback_data="changelog_exportar")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def menu_exportar_categoria_changelog(categorias):
+    """Menu para selecionar categoria na exportação"""
+    keyboard = []
+
+    for idx, cat in enumerate(categorias):
+        emoji = "📍"
+        keyboard.append([InlineKeyboardButton(f"{emoji} {cat}", callback_data=f"export_cat_{idx}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 Voltar", callback_data="changelog_exportar")])
+    return InlineKeyboardMarkup(keyboard)
+
