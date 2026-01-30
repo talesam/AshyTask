@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 
 # Carregar IDs dos administradores
 admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -896,8 +896,11 @@ async def listar_changelogs_inline(query, filtro=None, categoria=None):
     for log in changelogs[:15]:  # Limita a 15
         pin_emoji = "📌 " if log['pinado'] else ""
         data = datetime.fromisoformat(log['data_criacao'])
-        texto += f"{pin_emoji}📍 `{data.strftime('%d/%m/%Y %H:%M')}` - *{log['autor_nome']}*\n"
-        texto += f"*{log['categoria']}:* {log['descricao'][:80]}{'...' if len(log['descricao']) > 80 else ''}\n\n"
+        autor_safe = escape_markdown(log['autor_nome'])
+        categoria_safe = escape_markdown(log['categoria'])
+        descricao_safe = escape_markdown(log['descricao'][:80])
+        texto += f"{pin_emoji}📍 `{data.strftime('%d/%m/%Y %H:%M')}` - *{autor_safe}*\n"
+        texto += f"*{categoria_safe}:* {descricao_safe}{'...' if len(log['descricao']) > 80 else ''}\n\n"
 
     # Criar botões para cada changelog
     buttons = []
@@ -923,11 +926,15 @@ async def mostrar_changelog(query, changelog_id: int):
     pin_emoji = "📌 " if changelog['pinado'] else ""
     data = datetime.fromisoformat(changelog['data_criacao'])
 
+    categoria_safe = escape_markdown(changelog['categoria'])
+    autor_safe = escape_markdown(changelog['autor_nome'])
+    descricao_safe = escape_markdown(changelog['descricao'])
+
     texto = f"{pin_emoji}*Changelog #{changelog['id']}*\n\n"
-    texto += f"📍 *Categoria:* `{changelog['categoria']}`\n"
-    texto += f"👤 *Autor:* `{changelog['autor_nome']}`\n"
+    texto += f"📍 *Categoria:* `{categoria_safe}`\n"
+    texto += f"👤 *Autor:* `{autor_safe}`\n"
     texto += f"📅 *Data:* `{data.strftime('%d/%m/%Y %H:%M')}`\n\n"
-    texto += f"📝 *Descrição:*\n{changelog['descricao']}"
+    texto += f"📝 *Descrição:*\n{descricao_safe}"
 
     user_id = query.from_user.id
     keyboard = acoes_changelog(changelog_id, changelog['autor_id'], user_id, changelog['pinado'])
