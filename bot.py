@@ -954,23 +954,28 @@ async def processar_changelog_texto(update: Update, context: ContextTypes.DEFAUL
 
     # Criando nova categoria
     if 'criando_categoria_changelog' in context.user_data:
+        texto_safe = escape_markdown(texto)
         sucesso = db.adicionar_categoria_changelog(texto)
         if sucesso:
             await update.message.reply_text(
-                f"✅ Categoria *{texto}* criada com sucesso!",
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📝 Criar Changelog", callback_data="changelog_novo"),
-                    InlineKeyboardButton("🔙 Menu", callback_data="changelog_menu")
-                ]])
+                f"✅ Categoria *{texto_safe}* criada com sucesso!",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "📝 Criar Changelog", callback_data="changelog_novo"
+                        ),
+                        InlineKeyboardButton("🔙 Menu", callback_data="changelog_menu"),
+                    ]
+                ]),
             )
         else:
             await update.message.reply_text(
-                f"❌ Categoria *{texto}* já existe!",
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Menu", callback_data="changelog_menu")
-                ]])
+                f"❌ Categoria *{texto_safe}* já existe!",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Menu", callback_data="changelog_menu")]
+                ]),
             )
         del context.user_data['criando_categoria_changelog']
         return
@@ -988,11 +993,15 @@ async def processar_changelog_texto(update: Update, context: ContextTypes.DEFAUL
         categoria = context.user_data['criando_changelog_cat']
         changelog_id = db.criar_changelog(categoria, texto, user.id, user.first_name)
 
+        categoria_safe = escape_markdown(categoria)
+        texto_safe = escape_markdown(texto)
+        nome_safe = escape_markdown(user.first_name)
+
         pin_emoji = "📍"
         texto_sucesso = f"✅ *Changelog criado com sucesso!*\n\n"
-        texto_sucesso += f"{pin_emoji} *Categoria:* {categoria}\n"
-        texto_sucesso += f"📝 *Descrição:* {texto}\n"
-        texto_sucesso += f"👤 *Por:* {user.first_name}"
+        texto_sucesso += f"{pin_emoji} *Categoria:* {categoria_safe}\n"
+        texto_sucesso += f"📝 *Descrição:* {texto_safe}\n"
+        texto_sucesso += f"👤 *Por:* {nome_safe}"
 
         keyboard = [[InlineKeyboardButton("📝 Ver Changelog", callback_data=f"changelog_ver_{changelog_id}")],
                     [InlineKeyboardButton("🔙 Menu Changelog", callback_data="changelog_menu")]]
