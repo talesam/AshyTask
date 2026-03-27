@@ -53,6 +53,9 @@ env/
 *.log
 logs/
 
+# Runtime
+*.pid
+
 # Backup files
 *.bak
 *.backup
