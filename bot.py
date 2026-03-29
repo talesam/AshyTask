@@ -1449,12 +1449,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Confirmar deleção
-    elif "confirma_del_" in data:
+    elif data.startswith("confirma_del_"):
         tarefa_id = int(data.split("_")[2])
         await deletar_tarefa(query, tarefa_id)
         return
     
-    elif "cancelar_del_" in data:
+    elif data.startswith("cancelar_del_"):
         tarefa_id = int(data.split("_")[2])
         await mostrar_tarefa(query, tarefa_id)
         return
