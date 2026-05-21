@@ -93,9 +93,13 @@ class Database:
             cursor.execute("INSERT OR IGNORE INTO categorias (nome) VALUES (?)", (cat,))
 
         # Inserir categorias padrão de changelog
-        categorias_changelog_padrao = ["Ashy Terminal", "GNOME", "XFCE", "Cinnamon", "All", "Geral"]
+        categorias_changelog_padrao = ["Ashy Terminal", "GNOME", "XFCE", "Cinnamon", "Geral"]
         for cat in categorias_changelog_padrao:
             cursor.execute("INSERT OR IGNORE INTO categorias_changelog (nome) VALUES (?)", (cat,))
+
+        # Migração: "All" foi consolidado em "Geral".
+        cursor.execute("UPDATE changelogs SET categoria = 'Geral' WHERE categoria = 'All'")
+        cursor.execute("DELETE FROM categorias_changelog WHERE nome = 'All'")
 
         # Índices para filtros e buscas frequentes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tarefas_categoria ON tarefas(categoria_id)")

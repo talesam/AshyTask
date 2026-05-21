@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 # Carregar IDs dos administradores
 admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -1202,7 +1202,6 @@ CORES_CATEGORIA = {
     "GNOME": "#9b59b6",          # Roxo
     "XFCE": "#27ae60",           # Verde
     "Cinnamon": "#e67e22",       # Laranja
-    "All": "#1abc9c",            # Turquesa
     "Geral": "#95a5a6",          # Cinza
 }
 
