@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.6.1"
+VERSION = "1.6.2"
 
 # Carregar IDs dos administradores
 admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -1417,8 +1417,6 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
     temp_path = None
     try:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        titulo_caption = escape_markdown(titulo)
-
         if formato == "html":
             # Salvar como HTML
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
@@ -1430,8 +1428,7 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
                 await query.message.reply_document(
                     document=f,
                     filename=f"changelog_{timestamp}.html",
-                    caption=f"📄 *{titulo_caption}*\n\n✅ {len(changelogs)} changelog(s) exportado(s) em HTML",
-                    parse_mode='Markdown'
+                    caption=f"📄 {titulo}\n\n✅ {len(changelogs)} changelog(s) exportado(s) em HTML",
                 )
             
         elif formato == "pdf":
@@ -1449,8 +1446,7 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
                     await query.message.reply_document(
                         document=f,
                         filename=f"changelog_{timestamp}.pdf",
-                        caption=f"📕 *{titulo_caption}*\n\n✅ {len(changelogs)} changelog(s) exportado(s) em PDF",
-                        parse_mode='Markdown'
+                        caption=f"📕 {titulo}\n\n✅ {len(changelogs)} changelog(s) exportado(s) em PDF",
                     )
                 
             except ImportError:
@@ -1471,8 +1467,7 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
         # Atualizar mensagem original
         keyboard = [[InlineKeyboardButton("🔙 Menu Changelog", callback_data="changelog_menu")]]
         await query.edit_message_text(
-            f"✅ *Exportação concluída!*\n\n📁 Arquivo enviado acima.",
-            parse_mode='Markdown',
+            "✅ Exportação concluída!\n\n📁 Arquivo enviado acima.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         
@@ -2737,7 +2732,8 @@ async def handle_changelog(query, data: str, context):
         if idx < len(categorias):
             categoria = categorias[idx]
             context.user_data['export_filtro'] = f'categoria_{categoria}'
-            texto = f"📤 *Exportar Categoria: {categoria}*\n\n_Escolha o formato:_"
+            categoria_safe = escape_markdown(categoria)
+            texto = f"📤 *Exportar Categoria:* {categoria_safe}\n\n_Escolha o formato:_"
             keyboard = menu_formato_exportacao(f"cat_{idx}")
             await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
 
