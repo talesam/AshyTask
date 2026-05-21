@@ -36,7 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.6.4"
+VERSION = "1.6.5"
 
 # Carregar IDs dos administradores
 admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -1402,86 +1402,179 @@ def gerar_html_changelog(changelogs: list, titulo: str = "Changelog - Ashy Task"
     return html_content
 
 
-def carregar_fonte_pdf(tamanho: int):
-    """Carrega uma fonte TTF quando disponível; fallback para fonte padrão."""
-    try:
-        from PIL import ImageFont
-
-        caminhos = [
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ]
-        for caminho in caminhos:
-            if os.path.exists(caminho):
-                return ImageFont.truetype(caminho, tamanho), True
-        return ImageFont.load_default(), False
-    except Exception:
-        return None, False
+PDF_EMOJI_REPLACEMENTS = str.maketrans({
+    "✅": "[OK]",
+    "📄": "[DOC]",
+    "⚡": "[PRIORIDADE]",
+    "🔴": "[ALTA]",
+    "🟡": "[MEDIA]",
+    "🟢": "[BAIXA]",
+    "📌": "[PINADO]",
+    "📍": "",
+    "📝": "",
+    "👤": "",
+    "📅": "",
+    "🆔": "#",
+})
 
 
-def normalizar_texto_pdf(texto: str, unicode_ok: bool) -> str:
-    texto = texto or ""
-    if unicode_ok:
-        return texto
-    return texto.encode("latin-1", "replace").decode("latin-1")
+def pdf_text(texto: str) -> str:
+    texto = (texto or "").translate(PDF_EMOJI_REPLACEMENTS)
+    texto = texto.replace("**", "").replace("__", "")
+    return texto.encode("cp1252", "replace").decode("cp1252")
 
 
-def gerar_pdf_changelog_basico(changelogs: list, titulo: str, output_path: str):
-    """Gera PDF sem dependências nativas do WeasyPrint."""
-    from PIL import Image, ImageDraw
+def pdf_escape(texto: str) -> bytes:
+    raw = pdf_text(texto).encode("cp1252", "replace")
+    raw = raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
+    return raw
 
-    largura, altura = 1240, 1754
-    margem = 90
-    line_height = 28
-    pages = []
 
-    title_font, title_unicode = carregar_fonte_pdf(32)
-    body_font, body_unicode = carregar_fonte_pdf(20)
-    small_font, small_unicode = carregar_fonte_pdf(16)
-    unicode_ok = title_unicode and body_unicode and small_unicode
+def hex_to_rgb(cor: str) -> tuple[float, float, float]:
+    cor = (cor or "#666666").lstrip("#")
+    if len(cor) != 6:
+        cor = "666666"
+    return tuple(int(cor[i:i + 2], 16) / 255 for i in (0, 2, 4))
+
+
+def wrap_pdf_text(texto: str, max_chars: int) -> list[str]:
+    linhas = []
+    for paragraph in pdf_text(texto).splitlines() or [""]:
+        linhas.extend(textwrap.wrap(paragraph, width=max_chars, replace_whitespace=False) or [""])
+    return linhas
+
+
+def gerar_pdf_changelog_nativo(changelogs: list, titulo: str, output_path: str):
+    """Gera PDF com texto real, sem dependências nativas externas."""
+    width, height = 595.28, 841.89
+    margin = 42
+    y = height - margin
+    pages: list[list[bytes]] = []
 
     def new_page():
-        page = Image.new("RGB", (largura, altura), "white")
-        draw = ImageDraw.Draw(page)
-        pages.append((page, draw))
-        return page, draw, margem
+        nonlocal y
+        pages.append([])
+        y = height - margin
 
-    _, draw, y = new_page()
+    def cmd(data: str | bytes):
+        if isinstance(data, str):
+            data = data.encode("ascii")
+        pages[-1].append(data + b"\n")
 
-    def add_line(texto, font=None, spacing=line_height):
-        nonlocal draw, y
-        font = font or body_font
-        if y + spacing > altura - margem:
-            _, draw, y = new_page()
-        draw.text((margem, y), normalizar_texto_pdf(texto, unicode_ok), fill="#111827", font=font)
-        y += spacing
+    def color(cor: str):
+        r, g, b = hex_to_rgb(cor)
+        cmd(f"{r:.3f} {g:.3f} {b:.3f} rg")
 
-    def add_wrapped(texto, width=98):
-        for paragraph in (texto or "").splitlines() or [""]:
-            lines = textwrap.wrap(paragraph, width=width, replace_whitespace=False) or [""]
-            for line in lines:
-                add_line(line)
+    def stroke_color(cor: str):
+        r, g, b = hex_to_rgb(cor)
+        cmd(f"{r:.3f} {g:.3f} {b:.3f} RG")
+
+    def text(x: float, yy: float, value: str, size: int = 10, font: str = "F1", cor: str = "#111827"):
+        color(cor)
+        cmd(b"BT /" + font.encode("ascii") + f" {size} Tf {x:.2f} {yy:.2f} Td ".encode("ascii") + b"(" + pdf_escape(value) + b") Tj ET")
+
+    def rect(x: float, yy: float, w: float, h: float, cor: str):
+        color(cor)
+        cmd(f"{x:.2f} {yy:.2f} {w:.2f} {h:.2f} re f")
+
+    def line(x1: float, y1: float, x2: float, y2: float, cor: str = "#e5e7eb"):
+        stroke_color(cor)
+        cmd(f"{x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S")
+
+    def ensure_space(needed: float):
+        if y - needed < margin:
+            new_page()
+
+    new_page()
+    text(margin, y, titulo, 20, "F2")
+    y -= 20
+    text(margin, y, f"Gerado por Ashy Task Bot em {datetime.now().strftime('%d/%m/%Y %H:%M')}", 8, "F1", "#6b7280")
+    y -= 22
+    line(margin, y, width - margin, y, "#2563eb")
+    y -= 22
 
     pinados = len([c for c in changelogs if c["pinado"]])
-    add_line(titulo, title_font, 44)
-    add_line(f"Gerado por Ashy Task Bot em {datetime.now().strftime('%d/%m/%Y %H:%M')}", small_font, 28)
-    y += 18
-    add_line(f"Total: {len(changelogs)} changelog(s) | Pinados: {pinados}", body_font, 34)
-    y += 12
+    rect(margin, y - 34, 118, 34, "#eef2ff")
+    text(margin + 10, y - 14, f"{len(changelogs)}", 16, "F2", "#111827")
+    text(margin + 48, y - 13, "Total", 8, "F1", "#4b5563")
+    rect(margin + 132, y - 34, 118, 34, "#fffbeb")
+    text(margin + 142, y - 14, f"{pinados}", 16, "F2", "#111827")
+    text(margin + 180, y - 13, "Pinados", 8, "F1", "#4b5563")
+    y -= 54
 
     for log in changelogs:
+        descricao_linhas = wrap_pdf_text(log["descricao"], 92)
+        item_h = 52 + (len(descricao_linhas) * 13)
+        ensure_space(item_h + 12)
+
+        cor = CORES_CATEGORIA.get(log["categoria"], "#666666")
+        item_top = y
+        item_bottom = y - item_h
+        rect(margin, item_bottom, width - (2 * margin), item_h, "#ffffff")
+        rect(margin, item_bottom, 4, item_h, cor)
+        line(margin, item_top, width - margin, item_top)
+        line(margin, item_bottom, width - margin, item_bottom)
+
         data = datetime.fromisoformat(log["data_criacao"]).strftime("%d/%m/%Y %H:%M")
         pinado = " | PINADO" if log["pinado"] else ""
         header = f"#{log['id']} | {log['categoria']} | {data} | {log['autor_nome']}{pinado}"
-        add_line("-" * 96, small_font, 24)
-        add_line(header, body_font, 32)
-        add_wrapped(log["descricao"], width=100)
-        y += 18
+        text(margin + 12, y - 18, header, 10, "F2", cor)
+        y -= 38
 
-    image_pages = [page for page, _ in pages]
-    image_pages[0].save(output_path, "PDF", save_all=True, append_images=image_pages[1:])
+        for linha in descricao_linhas:
+            text(margin + 12, y, linha, 9, "F1", "#1f2937")
+            y -= 13
+        y = item_bottom - 14
+
+    objects: list[bytes] = []
+
+    def add_object(body: bytes) -> int:
+        objects.append(body)
+        return len(objects)
+
+    catalog_id = add_object(b"<< /Type /Catalog /Pages 2 0 R >>")
+    pages_id = add_object(b"")
+    font_regular_id = add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    font_bold_id = add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    page_ids = []
+    for page_cmds in pages:
+        stream = b"".join(page_cmds)
+        content_id = add_object(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"endstream")
+        page_id = add_object(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] "
+            b"/Resources << /Font << /F1 " + str(font_regular_id).encode("ascii") +
+            b" 0 R /F2 " + str(font_bold_id).encode("ascii") +
+            b" 0 R >> >> /Contents " + str(content_id).encode("ascii") + b" 0 R >>"
+        )
+        page_ids.append(page_id)
+
+    objects[pages_id - 1] = (
+        b"<< /Type /Pages /Kids [" +
+        b" ".join(f"{pid} 0 R".encode("ascii") for pid in page_ids) +
+        b"] /Count " + str(len(page_ids)).encode("ascii") + b" >>"
+    )
+
+    output = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for idx, body in enumerate(objects, start=1):
+        offsets.append(len(output))
+        output.extend(f"{idx} 0 obj\n".encode("ascii"))
+        output.extend(body)
+        output.extend(b"\nendobj\n")
+
+    xref = len(output)
+    output.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    output.extend(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        output.extend(f"{off:010d} 00000 n \n".encode("ascii"))
+    output.extend(
+        b"trailer\n<< /Size " + str(len(objects) + 1).encode("ascii") +
+        b" /Root " + str(catalog_id).encode("ascii") + b" 0 R >>\nstartxref\n" +
+        str(xref).encode("ascii") + b"\n%%EOF\n"
+    )
+
+    with open(output_path, "wb") as f:
+        f.write(output)
 
 
 async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titulo: str = "Changelog"):
@@ -1522,8 +1615,8 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
                 from weasyprint import HTML
                 HTML(string=html_content, base_url=os.getcwd()).write_pdf(temp_path)
             except Exception:
-                logger.exception("WeasyPrint falhou; usando fallback Pillow")
-                gerar_pdf_changelog_basico(changelogs, titulo, temp_path)
+                logger.exception("WeasyPrint falhou; usando fallback PDF nativo")
+                gerar_pdf_changelog_nativo(changelogs, titulo, temp_path)
 
             with open(temp_path, 'rb') as f:
                 await query.message.reply_document(
