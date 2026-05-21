@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.6.2"
+VERSION = "1.6.3"
 
 # Carregar IDs dos administradores
 admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -1451,16 +1451,14 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
                 
             except ImportError:
                 await query.message.reply_text(
-                    "❌ *Erro:* Biblioteca `weasyprint` não instalada.\n\n"
-                    "Instale com: `pip install weasyprint`",
-                    parse_mode='Markdown'
+                    "❌ Erro: biblioteca weasyprint não instalada.\n\n"
+                    "Instale com: pip install weasyprint"
                 )
                 return
             except Exception as e:
-                logger.error(f"Erro ao gerar PDF: {e}")
+                logger.exception("Erro ao gerar PDF")
                 await query.message.reply_text(
-                    f"❌ *Erro ao gerar PDF:* {str(e)}",
-                    parse_mode='Markdown'
+                    f"❌ Erro ao gerar PDF: {str(e)}"
                 )
                 return
         
@@ -1472,7 +1470,7 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
         )
         
     except Exception as e:
-        logger.error(f"Erro na exportação: {e}")
+        logger.exception("Erro na exportação")
         await query.message.reply_text(f"❌ Erro na exportação: {str(e)}")
     finally:
         if temp_path and os.path.exists(temp_path):
