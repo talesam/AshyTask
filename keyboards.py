@@ -342,34 +342,33 @@ def confirmar_delecao_changelog(changelog_id: int):
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ EXPORTAÇÃO DE CHANGELOG ============
+# ============ EXPORTAÇÃO KEYBOARDS ============
 
 def menu_exportar_changelog():
     """Menu de opções de exportação de changelog"""
     keyboard = [
         [InlineKeyboardButton("📋 Exportar Todos", callback_data="export_todos")],
         [InlineKeyboardButton("📌 Exportar Pinados", callback_data="export_pinados")],
-        [InlineKeyboardButton("🖥️ Exportar por Categoria", callback_data="export_categorias")],
+        [InlineKeyboardButton("🖥️ Por Categoria", callback_data="export_categorias")],
         [InlineKeyboardButton("🔙 Voltar", callback_data="changelog_menu")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def menu_formato_exportacao(filtro: str):
+def menu_formato_exportacao(tipo: str):
     """Menu para escolher formato de exportação (HTML ou PDF)"""
     keyboard = [
-        [InlineKeyboardButton("📄 HTML", callback_data=f"formato_html_{filtro}")],
-        [InlineKeyboardButton("📕 PDF", callback_data=f"formato_pdf_{filtro}")],
+        [
+            InlineKeyboardButton("📄 HTML", callback_data=f"formato_html_{tipo}"),
+            InlineKeyboardButton("📕 PDF", callback_data=f"formato_pdf_{tipo}")
+        ],
         [InlineKeyboardButton("🔙 Voltar", callback_data="changelog_exportar")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def menu_exportar_categoria_changelog(categorias):
-    """Menu para selecionar categoria na exportação"""
+def menu_exportar_categoria_changelog(categorias: list):
+    """Menu para selecionar categoria para exportação"""
     keyboard = []
-
     for idx, cat in enumerate(categorias):
-        emoji = "📍"
-        keyboard.append([InlineKeyboardButton(f"{emoji} {cat}", callback_data=f"export_cat_{idx}")])
-
+        keyboard.append([InlineKeyboardButton(f"📍 {cat}", callback_data=f"export_cat_{idx}")])
     keyboard.append([InlineKeyboardButton("🔙 Voltar", callback_data="changelog_exportar")])
     return InlineKeyboardMarkup(keyboard)
