@@ -3,6 +3,7 @@ import warnings
 import os
 import tempfile
 import html
+import textwrap
 from typing import Dict, Optional
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -35,7 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.6.3"
+VERSION = "1.6.4"
 
 # Carregar IDs dos administradores
 admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -1401,6 +1402,88 @@ def gerar_html_changelog(changelogs: list, titulo: str = "Changelog - Ashy Task"
     return html_content
 
 
+def carregar_fonte_pdf(tamanho: int):
+    """Carrega uma fonte TTF quando disponível; fallback para fonte padrão."""
+    try:
+        from PIL import ImageFont
+
+        caminhos = [
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        for caminho in caminhos:
+            if os.path.exists(caminho):
+                return ImageFont.truetype(caminho, tamanho), True
+        return ImageFont.load_default(), False
+    except Exception:
+        return None, False
+
+
+def normalizar_texto_pdf(texto: str, unicode_ok: bool) -> str:
+    texto = texto or ""
+    if unicode_ok:
+        return texto
+    return texto.encode("latin-1", "replace").decode("latin-1")
+
+
+def gerar_pdf_changelog_basico(changelogs: list, titulo: str, output_path: str):
+    """Gera PDF sem dependências nativas do WeasyPrint."""
+    from PIL import Image, ImageDraw
+
+    largura, altura = 1240, 1754
+    margem = 90
+    line_height = 28
+    pages = []
+
+    title_font, title_unicode = carregar_fonte_pdf(32)
+    body_font, body_unicode = carregar_fonte_pdf(20)
+    small_font, small_unicode = carregar_fonte_pdf(16)
+    unicode_ok = title_unicode and body_unicode and small_unicode
+
+    def new_page():
+        page = Image.new("RGB", (largura, altura), "white")
+        draw = ImageDraw.Draw(page)
+        pages.append((page, draw))
+        return page, draw, margem
+
+    _, draw, y = new_page()
+
+    def add_line(texto, font=None, spacing=line_height):
+        nonlocal draw, y
+        font = font or body_font
+        if y + spacing > altura - margem:
+            _, draw, y = new_page()
+        draw.text((margem, y), normalizar_texto_pdf(texto, unicode_ok), fill="#111827", font=font)
+        y += spacing
+
+    def add_wrapped(texto, width=98):
+        for paragraph in (texto or "").splitlines() or [""]:
+            lines = textwrap.wrap(paragraph, width=width, replace_whitespace=False) or [""]
+            for line in lines:
+                add_line(line)
+
+    pinados = len([c for c in changelogs if c["pinado"]])
+    add_line(titulo, title_font, 44)
+    add_line(f"Gerado por Ashy Task Bot em {datetime.now().strftime('%d/%m/%Y %H:%M')}", small_font, 28)
+    y += 18
+    add_line(f"Total: {len(changelogs)} changelog(s) | Pinados: {pinados}", body_font, 34)
+    y += 12
+
+    for log in changelogs:
+        data = datetime.fromisoformat(log["data_criacao"]).strftime("%d/%m/%Y %H:%M")
+        pinado = " | PINADO" if log["pinado"] else ""
+        header = f"#{log['id']} | {log['categoria']} | {data} | {log['autor_nome']}{pinado}"
+        add_line("-" * 96, small_font, 24)
+        add_line(header, body_font, 32)
+        add_wrapped(log["descricao"], width=100)
+        y += 18
+
+    image_pages = [page for page, _ in pages]
+    image_pages[0].save(output_path, "PDF", save_all=True, append_images=image_pages[1:])
+
+
 async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titulo: str = "Changelog"):
     """Exporta changelogs para arquivo HTML ou PDF e envia ao usuário"""
     
@@ -1432,35 +1515,22 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
                 )
             
         elif formato == "pdf":
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+                temp_path = f.name
+
             try:
                 from weasyprint import HTML
-                
-                # Gerar PDF
-                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
-                    temp_path = f.name
-                
                 HTML(string=html_content, base_url=os.getcwd()).write_pdf(temp_path)
-                
-                # Enviar arquivo
-                with open(temp_path, 'rb') as f:
-                    await query.message.reply_document(
-                        document=f,
-                        filename=f"changelog_{timestamp}.pdf",
-                        caption=f"📕 {titulo}\n\n✅ {len(changelogs)} changelog(s) exportado(s) em PDF",
-                    )
-                
-            except ImportError:
-                await query.message.reply_text(
-                    "❌ Erro: biblioteca weasyprint não instalada.\n\n"
-                    "Instale com: pip install weasyprint"
+            except Exception:
+                logger.exception("WeasyPrint falhou; usando fallback Pillow")
+                gerar_pdf_changelog_basico(changelogs, titulo, temp_path)
+
+            with open(temp_path, 'rb') as f:
+                await query.message.reply_document(
+                    document=f,
+                    filename=f"changelog_{timestamp}.pdf",
+                    caption=f"📕 {titulo}\n\n✅ {len(changelogs)} changelog(s) exportado(s) em PDF",
                 )
-                return
-            except Exception as e:
-                logger.exception("Erro ao gerar PDF")
-                await query.message.reply_text(
-                    f"❌ Erro ao gerar PDF: {str(e)}"
-                )
-                return
         
         # Atualizar mensagem original
         keyboard = [[InlineKeyboardButton("🔙 Menu Changelog", callback_data="changelog_menu")]]
