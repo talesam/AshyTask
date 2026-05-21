@@ -8,7 +8,9 @@ class Database:
         self.init_db()
     
     def get_connection(self):
-        return sqlite3.connect(self.db_name)
+        conn = sqlite3.connect(self.db_name)
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
     
     def init_db(self):
         """Inicializa o banco de dados com as tabelas necessárias"""
@@ -95,20 +97,31 @@ class Database:
         for cat in categorias_changelog_padrao:
             cursor.execute("INSERT OR IGNORE INTO categorias_changelog (nome) VALUES (?)", (cat,))
 
+        # Índices para filtros e buscas frequentes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tarefas_categoria ON tarefas(categoria_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tarefas_status ON tarefas(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tarefas_autor ON tarefas(autor_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_changelogs_categoria ON changelogs(categoria)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_changelogs_pin_data ON changelogs(pinado, data_criacao)")
+
         conn.commit()
         conn.close()
     
     def adicionar_categoria(self, nome: str) -> bool:
         """Adiciona nova categoria"""
+        nome = nome.strip()
+        if not nome:
+            return False
+        conn = self.get_connection()
         try:
-            conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("INSERT INTO categorias (nome) VALUES (?)", (nome,))
             conn.commit()
-            conn.close()
             return True
         except sqlite3.IntegrityError:
             return False
+        finally:
+            conn.close()
     
     def listar_categorias(self) -> List[Dict]:
         """Lista todas as categorias"""
@@ -118,6 +131,96 @@ class Database:
         categorias = [{"id": row[0], "nome": row[1]} for row in cursor.fetchall()]
         conn.close()
         return categorias
+
+    def obter_categoria(self, categoria_id: int) -> Optional[Dict]:
+        """Obtém uma categoria de tarefa por ID"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nome FROM categorias WHERE id = ?", (categoria_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        return {"id": row[0], "nome": row[1]}
+
+    def obter_categoria_por_nome(self, nome: str) -> Optional[Dict]:
+        """Obtém uma categoria de tarefa por nome"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nome FROM categorias WHERE lower(nome) = lower(?)", (nome.strip(),))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        return {"id": row[0], "nome": row[1]}
+
+    def obter_ou_criar_categoria(self, nome: str) -> int:
+        """Obtém ou cria uma categoria de tarefa e retorna o ID"""
+        categoria = self.obter_categoria_por_nome(nome)
+        if categoria:
+            return categoria["id"]
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO categorias (nome) VALUES (?)", (nome.strip(),))
+        conn.commit()
+        conn.close()
+
+        categoria = self.obter_categoria_por_nome(nome)
+        return categoria["id"]
+
+    def contar_tarefas_categoria(self, categoria_id: int) -> int:
+        """Conta tarefas vinculadas a uma categoria"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM tarefas WHERE categoria_id = ?", (categoria_id,))
+        total = cursor.fetchone()[0]
+        conn.close()
+        return total
+
+    def renomear_categoria(self, categoria_id: int, novo_nome: str) -> bool:
+        """Renomeia uma categoria de tarefa"""
+        novo_nome = novo_nome.strip()
+        if not novo_nome:
+            return False
+
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE categorias SET nome = ? WHERE id = ?", (novo_nome, categoria_id))
+            updated = cursor.rowcount > 0
+            conn.commit()
+            return updated
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+
+    def remover_categoria(self, categoria_id: int, mover_para_id: Optional[int] = None) -> bool:
+        """Remove categoria; se houver tarefas, move para outra categoria."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM tarefas WHERE categoria_id = ?", (categoria_id,))
+            total_tarefas = cursor.fetchone()[0]
+
+            if total_tarefas:
+                if not mover_para_id or mover_para_id == categoria_id:
+                    return False
+                cursor.execute("SELECT 1 FROM categorias WHERE id = ?", (mover_para_id,))
+                if cursor.fetchone() is None:
+                    return False
+                cursor.execute(
+                    "UPDATE tarefas SET categoria_id = ? WHERE categoria_id = ?",
+                    (mover_para_id, categoria_id),
+                )
+
+            cursor.execute("DELETE FROM categorias WHERE id = ?", (categoria_id,))
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            return deleted
+        finally:
+            conn.close()
     
     def criar_tarefa(self, titulo: str, descricao: str, categoria_id: int, 
                      autor_id: int, autor_nome: str, prioridade: str = "media",
@@ -228,11 +331,24 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        data_conclusao = None
-        if status == "concluido":
-            data_conclusao = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("SELECT status FROM tarefas WHERE id = ?", (tarefa_id,))
+        status_atual = cursor.fetchone()
+        if not status_atual:
+            conn.close()
+            return False
 
-            # Buscar dados da tarefa para criar changelog
+        status_anterior = status_atual[0]
+        data_conclusao = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if status == "concluido" else None
+
+        cursor.execute("""
+            UPDATE tarefas
+            SET status = ?, data_conclusao = ?
+            WHERE id = ?
+        """, (status, data_conclusao, tarefa_id))
+
+        success = cursor.rowcount > 0
+
+        if success and status == "concluido" and status_anterior != "concluido":
             cursor.execute("""
                 SELECT t.titulo, t.descricao, t.prioridade, t.autor_id, t.autor_nome, c.nome as categoria
                 FROM tarefas t
@@ -252,28 +368,25 @@ class Database:
                     changelog_descricao += f"📄 {descricao}\n\n"
                 changelog_descricao += f"⚡ Prioridade: {prioridade_emoji} {prioridade.capitalize()}"
 
-                # Criar changelog automaticamente
-                self.criar_changelog(
-                    categoria=categoria or "Geral",
-                    descricao=changelog_descricao,
-                    autor_id=autor_id,
-                    autor_nome=autor_nome
-                )
+                cursor.execute("""
+                    INSERT INTO changelogs (categoria, descricao, autor_id, autor_nome, data_criacao, pinado)
+                    VALUES (?, ?, ?, ?, ?, 0)
+                """, (
+                    categoria or "Geral",
+                    changelog_descricao,
+                    autor_id,
+                    autor_nome,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ))
 
-        cursor.execute("""
-            UPDATE tarefas
-            SET status = ?, data_conclusao = ?
-            WHERE id = ?
-        """, (status, data_conclusao, tarefa_id))
-
-        success = cursor.rowcount > 0
         conn.commit()
         conn.close()
         return success
     
     def atualizar_tarefa(self, tarefa_id: int, titulo: Optional[str] = None,
                         descricao: Optional[str] = None, 
-                        prioridade: Optional[str] = None) -> bool:
+                        prioridade: Optional[str] = None,
+                        categoria_id: Optional[int] = None) -> bool:
         """Atualiza informações de uma tarefa"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -281,17 +394,21 @@ class Database:
         updates = []
         params = []
         
-        if titulo:
+        if titulo is not None:
             updates.append("titulo = ?")
             params.append(titulo)
-        if descricao:
+        if descricao is not None:
             updates.append("descricao = ?")
             params.append(descricao)
-        if prioridade:
+        if prioridade is not None:
             updates.append("prioridade = ?")
             params.append(prioridade)
+        if categoria_id is not None:
+            updates.append("categoria_id = ?")
+            params.append(categoria_id)
         
         if not updates:
+            conn.close()
             return False
         
         params.append(tarefa_id)
@@ -453,17 +570,127 @@ class Database:
         conn.close()
         return categorias
 
+    def listar_categorias_changelog_detalhes(self) -> List[Dict]:
+        """Lista categorias de changelog com IDs e totais"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT cc.id, cc.nome, COUNT(c.id) as total
+            FROM categorias_changelog cc
+            LEFT JOIN changelogs c ON c.categoria = cc.nome
+            GROUP BY cc.id, cc.nome
+            ORDER BY cc.nome
+        """)
+        categorias = [{"id": row[0], "nome": row[1], "total": row[2]} for row in cursor.fetchall()]
+        conn.close()
+        return categorias
+
+    def obter_categoria_changelog(self, categoria_id: int) -> Optional[Dict]:
+        """Obtém uma categoria de changelog por ID"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nome FROM categorias_changelog WHERE id = ?", (categoria_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        return {"id": row[0], "nome": row[1]}
+
     def adicionar_categoria_changelog(self, nome: str) -> bool:
         """Adiciona nova categoria de changelog"""
+        nome = nome.strip()
+        if not nome:
+            return False
+        conn = self.get_connection()
         try:
-            conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("INSERT INTO categorias_changelog (nome) VALUES (?)", (nome,))
             conn.commit()
-            conn.close()
             return True
         except sqlite3.IntegrityError:
             return False
+        finally:
+            conn.close()
+
+    def obter_ou_criar_categoria_changelog(self, nome: str) -> str:
+        """Obtém ou cria uma categoria de changelog e retorna o nome canônico"""
+        nome = nome.strip()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome FROM categorias_changelog WHERE lower(nome) = lower(?)", (nome,))
+        row = cursor.fetchone()
+        if row:
+            conn.close()
+            return row[0]
+
+        cursor.execute("INSERT OR IGNORE INTO categorias_changelog (nome) VALUES (?)", (nome,))
+        conn.commit()
+        cursor.execute("SELECT nome FROM categorias_changelog WHERE lower(nome) = lower(?)", (nome,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0]
+
+    def contar_changelogs_categoria(self, categoria: str) -> int:
+        """Conta changelogs vinculados a uma categoria"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM changelogs WHERE categoria = ?", (categoria,))
+        total = cursor.fetchone()[0]
+        conn.close()
+        return total
+
+    def renomear_categoria_changelog(self, categoria_id: int, novo_nome: str) -> bool:
+        """Renomeia uma categoria de changelog e atualiza os registros existentes"""
+        novo_nome = novo_nome.strip()
+        if not novo_nome:
+            return False
+
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT nome FROM categorias_changelog WHERE id = ?", (categoria_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+
+            nome_antigo = row[0]
+            cursor.execute("UPDATE categorias_changelog SET nome = ? WHERE id = ?", (novo_nome, categoria_id))
+            cursor.execute("UPDATE changelogs SET categoria = ? WHERE categoria = ?", (novo_nome, nome_antigo))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+
+    def remover_categoria_changelog(self, categoria_id: int, mover_para: str = "Geral") -> bool:
+        """Remove categoria de changelog; registros existentes são movidos."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT nome FROM categorias_changelog WHERE id = ?", (categoria_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+
+            nome = row[0]
+            cursor.execute("SELECT COUNT(*) FROM changelogs WHERE categoria = ?", (nome,))
+            total = cursor.fetchone()[0]
+
+            if total:
+                if nome.lower() == mover_para.lower():
+                    return False
+                cursor.execute("INSERT OR IGNORE INTO categorias_changelog (nome) VALUES (?)", (mover_para,))
+                cursor.execute("SELECT nome FROM categorias_changelog WHERE lower(nome) = lower(?)", (mover_para,))
+                destino = cursor.fetchone()[0]
+                cursor.execute("UPDATE changelogs SET categoria = ? WHERE categoria = ?", (destino, nome))
+
+            cursor.execute("DELETE FROM categorias_changelog WHERE id = ?", (categoria_id,))
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            return deleted
+        finally:
+            conn.close()
 
     def criar_changelog(self, categoria: str, descricao: str, autor_id: int, autor_nome: str) -> int:
         """Cria um novo changelog"""

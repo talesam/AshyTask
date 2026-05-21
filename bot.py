@@ -2,6 +2,7 @@ import logging
 import warnings
 import os
 import tempfile
+import html
 from typing import Dict, Optional
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -19,7 +20,6 @@ from datetime import datetime
 
 from database import Database
 from keyboards import *
-import handlers
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.5.3"
+VERSION = "1.6.0"
 
 # Carregar IDs dos administradores
 admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -59,6 +59,45 @@ db = Database()
 # Constantes
 CATEGORIAS = ["XFCE", "Cinnamon", "GNOME", "Geral"]
 STATUS = ["pendente", "em_andamento", "concluido"]
+
+
+def usuario_pode_gerenciar(user_id: int) -> bool:
+    """Permite todos se ADMIN_IDS não estiver configurado; restringe se estiver."""
+    return not ADMIN_IDS or user_id in ADMIN_IDS
+
+
+def usuario_pode_editar_tarefa(user_id: int, tarefa: Optional[Dict]) -> bool:
+    """Autor sempre pode editar; admins configurados também podem."""
+    if not tarefa:
+        return False
+    return tarefa.get('autor_id') == user_id or user_id in ADMIN_IDS
+
+
+def usuario_pode_editar_changelog(user_id: int, changelog: Optional[Dict]) -> bool:
+    """Autor sempre pode editar; admins configurados também podem."""
+    if not changelog:
+        return False
+    return changelog.get('autor_id') == user_id or user_id in ADMIN_IDS
+
+
+def encurtar(texto: str, limite: int = 28) -> str:
+    texto = texto or ""
+    return texto if len(texto) <= limite else texto[: limite - 1] + "…"
+
+
+def validar_nome_categoria(nome: str) -> tuple[bool, str, str]:
+    nome = " ".join((nome or "").strip().split())
+    if not nome:
+        return False, nome, "O nome não pode ficar vazio."
+    if len(nome) > 40:
+        return False, nome, "Use até 40 caracteres."
+    if nome.startswith("/"):
+        return False, nome, "O nome não pode começar com comando."
+    return True, nome, ""
+
+
+def categoria_geral_id() -> int:
+    return db.obter_ou_criar_categoria("Geral")
 
 
 def keyboard_filtros():
@@ -108,6 +147,7 @@ Este bot ajuda a organizar as tarefas da equipe de desenvolvimento.
 /buscar [termo] - Buscar tarefas
 /comentar [id] [texto] - Adicionar comentário
 /addcategoria [nome] - Criar nova categoria
+/categorias - Gerenciar categorias
 /changelog - Gerenciar mudanças do projeto
 /stats - Ver estatísticas
 /menu - Abrir menu principal
@@ -141,6 +181,9 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /buscar [termo] - Buscar tarefas por palavra-chave
 /comentar [id] [texto] - Adicionar comentário em uma tarefa
 /addcategoria [nome] - Criar uma nova categoria
+/categorias - Gerenciar categorias
+/renomearcategoria [id] [novo_nome] - Renomear categoria
+/removercategoria [id] - Remover categoria
 /changelog - Gerenciar mudanças do projeto
 /stats - Ver estatísticas do projeto
 /menu - Abrir menu principal
@@ -155,7 +198,7 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 3️⃣ *Gerenciar:* Clique na tarefa para ver opções
 4️⃣ *Atualizar status:* Use os botões 🔄 ou ✅
 5️⃣ *Editar/Deletar:* Botões ✏️ e 🗑️
-6️⃣ *Adicionar categoria:* Use /addcategoria ou clique no botão ➕
+6️⃣ *Categorias:* Use /categorias para criar, renomear ou remover
 
 *📌 Configurar Tópico:*
 1️⃣ Entre no tópico desejado e use /topicoid
@@ -420,6 +463,7 @@ _Escolha uma das opções abaixo para navegar:_
             InlineKeyboardButton("📝 Changelog", callback_data="changelog_menu"),
             InlineKeyboardButton("📊 Estatísticas", callback_data="menu_stats")
         ],
+        [InlineKeyboardButton("🏷️ Categorias", callback_data="categorias_menu")],
         [
             InlineKeyboardButton("⏳ Pendentes", callback_data="menu_filtro_pendente"),
             InlineKeyboardButton("🔄 Em Andamento", callback_data="menu_filtro_em_andamento")
@@ -486,7 +530,6 @@ async def receber_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Recebe a categoria via callback"""
     query = update.callback_query
 
-    print(f"\n[DEBUG receber_categoria] FUNÇÃO CHAMADA! Callback: {query.data}\n")
     logger.info(f"[receber_categoria] Callback recebido: {query.data}")
 
     await query.answer()
@@ -528,13 +571,18 @@ async def receber_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receber_nova_categoria_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Recebe o nome da nova categoria e retorna ao menu de seleção"""
-    nome_categoria = update.message.text.strip()
+    valido, nome_categoria, erro = validar_nome_categoria(update.message.text)
+    if not valido:
+        await update.message.reply_text(f"❌ {erro}\n\nDigite outro nome para a categoria.")
+        return NOVA_CATEGORIA_INLINE
 
     # Adicionar categoria ao banco
-    if db.adicionar_categoria(nome_categoria):
-        mensagem = f"✅ Categoria '*{nome_categoria}*' criada com sucesso!\n\n📁 Selecione a categoria:"
+    if db.obter_categoria_por_nome(nome_categoria):
+        mensagem = f"⚠️ Categoria '*{escape_markdown(nome_categoria)}*' já existe.\n\n📁 Selecione a categoria:"
+    elif db.adicionar_categoria(nome_categoria):
+        mensagem = f"✅ Categoria '*{escape_markdown(nome_categoria)}*' criada com sucesso!\n\n📁 Selecione a categoria:"
     else:
-        mensagem = f"⚠️ Categoria '*{nome_categoria}*' já existe.\n\n📁 Selecione a categoria:"
+        mensagem = f"❌ Não foi possível criar '*{escape_markdown(nome_categoria)}*'.\n\n📁 Selecione a categoria:"
 
     # Buscar categorias atualizadas e mostrar menu novamente
     categorias = db.listar_categorias()
@@ -684,19 +732,31 @@ async def processar_mensagem_texto(update: Update, context: ContextTypes.DEFAULT
 
     # Verificar se está criando categoria de tarefa inline
     if 'criando_categoria_tarefa' in context.user_data:
-        sucesso = db.adicionar_categoria(texto)
-        if sucesso:
+        valido, nome_categoria, erro = validar_nome_categoria(texto)
+        if not valido:
+            await update.message.reply_text(f"❌ {erro}")
+            return
+
+        if db.obter_categoria_por_nome(nome_categoria):
             await update.message.reply_text(
-                f"✅ Categoria *{texto}* criada com sucesso!",
+                f"⚠️ Categoria *{escape_markdown(nome_categoria)}* já existe.",
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📋 Ver Tarefas", callback_data="menu_tarefas"),
                     InlineKeyboardButton("🔙 Menu", callback_data="menu_voltar")
+                ]])
+            )
+        elif db.adicionar_categoria(nome_categoria):
+            await update.message.reply_text(
+                f"✅ Categoria *{escape_markdown(nome_categoria)}* criada com sucesso!",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🏷️ Gerenciar Categorias", callback_data="categorias_menu"),
+                    InlineKeyboardButton("📋 Ver Tarefas", callback_data="menu_tarefas")
                 ]])
             )
         else:
             await update.message.reply_text(
-                f"❌ Categoria *{texto}* já existe!",
+                f"❌ Não foi possível criar *{escape_markdown(nome_categoria)}*.",
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Menu", callback_data="menu_voltar")
@@ -728,12 +788,17 @@ async def processar_mensagem_texto(update: Update, context: ContextTypes.DEFAULT
 
     # Processar nome de nova categoria durante criação de tarefa
     if context.user_data.get('aguardando') == 'nome_nova_categoria':
-        nome_categoria = texto.strip()
+        valido, nome_categoria, erro = validar_nome_categoria(texto)
+        if not valido:
+            await update.message.reply_text(f"❌ {erro}\n\nDigite outro nome para a categoria.")
+            return
 
-        if db.adicionar_categoria(nome_categoria):
-            mensagem = f"✅ Categoria '*{nome_categoria}*' criada com sucesso!\n\n📁 Selecione a categoria:"
+        if db.obter_categoria_por_nome(nome_categoria):
+            mensagem = f"⚠️ Categoria '*{escape_markdown(nome_categoria)}*' já existe.\n\n📁 Selecione a categoria:"
+        elif db.adicionar_categoria(nome_categoria):
+            mensagem = f"✅ Categoria '*{escape_markdown(nome_categoria)}*' criada com sucesso!\n\n📁 Selecione a categoria:"
         else:
-            mensagem = f"⚠️ Categoria '*{nome_categoria}*' já existe.\n\n📁 Selecione a categoria:"
+            mensagem = f"❌ Não foi possível criar '*{escape_markdown(nome_categoria)}*'.\n\n📁 Selecione a categoria:"
 
         # Mostrar menu de categorias atualizado
         categorias = db.listar_categorias()
@@ -745,6 +810,59 @@ async def processar_mensagem_texto(update: Update, context: ContextTypes.DEFAULT
             reply_markup=keyboard
         )
         context.user_data['aguardando'] = 'categoria_tarefa'
+        return
+
+    # Renomear categoria de tarefa via menu
+    if 'renomeando_categoria' in context.user_data:
+        categoria_id = context.user_data['renomeando_categoria']
+        valido, novo_nome, erro = validar_nome_categoria(texto)
+        if not valido:
+            await update.message.reply_text(f"❌ {erro}")
+            return
+
+        categoria = db.obter_categoria(categoria_id)
+        existente = db.obter_categoria_por_nome(novo_nome)
+        if not categoria:
+            await update.message.reply_text("❌ Categoria não encontrada.")
+        elif existente and existente['id'] != categoria_id:
+            await update.message.reply_text(f"⚠️ Categoria *{escape_markdown(novo_nome)}* já existe.", parse_mode='Markdown')
+            return
+        elif db.renomear_categoria(categoria_id, novo_nome):
+            await update.message.reply_text(
+                f"✅ Categoria *{escape_markdown(categoria['nome'])}* renomeada para *{escape_markdown(novo_nome)}*.",
+                parse_mode='Markdown',
+                reply_markup=keyboard_menu_categorias_tarefas(update.effective_user.id),
+            )
+        else:
+            await update.message.reply_text("❌ Não foi possível renomear a categoria.")
+        del context.user_data['renomeando_categoria']
+        return
+
+    # Renomear categoria de changelog via menu
+    if 'renomeando_categoria_changelog' in context.user_data:
+        categoria_id = context.user_data['renomeando_categoria_changelog']
+        valido, novo_nome, erro = validar_nome_categoria(texto)
+        if not valido:
+            await update.message.reply_text(f"❌ {erro}")
+            return
+
+        categoria = db.obter_categoria_changelog(categoria_id)
+        categorias_existentes = db.listar_categorias_changelog_detalhes()
+        nome_em_uso = any(c['nome'].lower() == novo_nome.lower() and c['id'] != categoria_id for c in categorias_existentes)
+        if not categoria:
+            await update.message.reply_text("❌ Categoria de changelog não encontrada.")
+        elif nome_em_uso:
+            await update.message.reply_text(f"⚠️ Categoria *{escape_markdown(novo_nome)}* já existe.", parse_mode='Markdown')
+            return
+        elif db.renomear_categoria_changelog(categoria_id, novo_nome):
+            await update.message.reply_text(
+                f"✅ Categoria de changelog *{escape_markdown(categoria['nome'])}* renomeada para *{escape_markdown(novo_nome)}*.",
+                parse_mode='Markdown',
+                reply_markup=keyboard_menu_categorias_changelog(update.effective_user.id),
+            )
+        else:
+            await update.message.reply_text("❌ Não foi possível renomear a categoria de changelog.")
+        del context.user_data['renomeando_categoria_changelog']
         return
 
     # Verificar se está processando changelog
@@ -785,6 +903,11 @@ async def processar_mensagem_texto(update: Update, context: ContextTypes.DEFAULT
     if 'editando_titulo' in context.user_data:
         tarefa_id = context.user_data['editando_titulo']
         user = update.effective_user
+        tarefa_atual = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(user.id, tarefa_atual):
+            await update.message.reply_text("❌ Você não tem permissão para editar esta tarefa.")
+            del context.user_data['editando_titulo']
+            return
         db.atualizar_tarefa(tarefa_id, titulo=texto)
         await update.message.reply_text(f"✅ Título da tarefa #{tarefa_id} atualizado!")
         del context.user_data['editando_titulo']
@@ -814,6 +937,11 @@ async def processar_mensagem_texto(update: Update, context: ContextTypes.DEFAULT
     if 'editando_descricao' in context.user_data:
         tarefa_id = context.user_data['editando_descricao']
         user = update.effective_user
+        tarefa_atual = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(user.id, tarefa_atual):
+            await update.message.reply_text("❌ Você não tem permissão para editar esta tarefa.")
+            del context.user_data['editando_descricao']
+            return
         db.atualizar_tarefa(tarefa_id, descricao=texto)
         await update.message.reply_text(f"✅ Descrição da tarefa #{tarefa_id} atualizada!")
         del context.user_data['editando_descricao']
@@ -954,8 +1082,14 @@ async def processar_changelog_texto(update: Update, context: ContextTypes.DEFAUL
 
     # Criando nova categoria
     if 'criando_categoria_changelog' in context.user_data:
-        texto_safe = escape_markdown(texto)
-        sucesso = db.adicionar_categoria_changelog(texto)
+        valido, nome_categoria, erro = validar_nome_categoria(texto)
+        if not valido:
+            await update.message.reply_text(f"❌ {erro}")
+            return
+
+        texto_safe = escape_markdown(nome_categoria)
+        nomes_existentes = [c['nome'].lower() for c in db.listar_categorias_changelog_detalhes()]
+        sucesso = nome_categoria.lower() not in nomes_existentes and db.adicionar_categoria_changelog(nome_categoria)
         if sucesso:
             await update.message.reply_text(
                 f"✅ Categoria *{texto_safe}* criada com sucesso!",
@@ -965,6 +1099,9 @@ async def processar_changelog_texto(update: Update, context: ContextTypes.DEFAUL
                         InlineKeyboardButton(
                             "📝 Criar Changelog", callback_data="changelog_novo"
                         ),
+                        InlineKeyboardButton("🏷️ Categorias", callback_data="changelog_categorias_admin"),
+                    ],
+                    [
                         InlineKeyboardButton("🔙 Menu", callback_data="changelog_menu"),
                     ]
                 ]),
@@ -983,6 +1120,11 @@ async def processar_changelog_texto(update: Update, context: ContextTypes.DEFAUL
     # Editando descrição de changelog
     if 'editando_changelog_desc' in context.user_data:
         changelog_id = context.user_data['editando_changelog_desc']
+        changelog = db.obter_changelog(changelog_id)
+        if not usuario_pode_editar_changelog(user.id, changelog):
+            await update.message.reply_text("❌ Você não tem permissão para editar este changelog.")
+            del context.user_data['editando_changelog_desc']
+            return
         db.atualizar_changelog(changelog_id, descricao=texto)
         await update.message.reply_text(f"✅ Descrição do changelog #{changelog_id} atualizada!")
         del context.user_data['editando_changelog_desc']
@@ -1011,6 +1153,47 @@ async def processar_changelog_texto(update: Update, context: ContextTypes.DEFAUL
         return
 
 
+def texto_menu_categorias_changelog() -> str:
+    categorias = db.listar_categorias_changelog_detalhes()
+    texto = "🏷️ *Categorias de Changelog*\n\n"
+    if not categorias:
+        return texto + "_Nenhuma categoria cadastrada._"
+
+    for cat in categorias:
+        texto += f"`{cat['id']}` - *{escape_markdown(cat['nome'])}* ({cat['total']} changelog(s))\n"
+    return texto
+
+
+def keyboard_menu_categorias_changelog(user_id: int):
+    categorias = db.listar_categorias_changelog_detalhes()
+    buttons = []
+    if usuario_pode_gerenciar(user_id):
+        buttons.append([InlineKeyboardButton("➕ Nova Categoria", callback_data="changelog_nova_cat")])
+        for cat in categorias:
+            buttons.append([
+                InlineKeyboardButton(f"✏️ {encurtar(cat['nome'], 24)}", callback_data=f"chgcat_rename_{cat['id']}"),
+                InlineKeyboardButton("🗑️", callback_data=f"chgcat_del_{cat['id']}"),
+            ])
+    buttons.append([InlineKeyboardButton("🔙 Changelog", callback_data="changelog_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def remover_categoria_changelog(categoria_id: int) -> tuple[bool, str]:
+    categoria = db.obter_categoria_changelog(categoria_id)
+    if not categoria:
+        return False, "❌ Categoria de changelog não encontrada."
+
+    if categoria['nome'].lower() == "geral":
+        return False, "❌ A categoria Geral é usada como destino padrão e não pode ser removida."
+
+    total = db.contar_changelogs_categoria(categoria['nome'])
+    if db.remover_categoria_changelog(categoria_id, mover_para="Geral"):
+        if total:
+            return True, f"✅ Categoria removida. {total} changelog(s) foram movidos para Geral."
+        return True, "✅ Categoria removida."
+    return False, "❌ Não foi possível remover a categoria de changelog."
+
+
 # ============ EXPORTAÇÃO DE CHANGELOG ============
 
 # Cores por categoria (paleta harmoniosa)
@@ -1025,155 +1208,198 @@ CORES_CATEGORIA = {
 
 
 def gerar_html_changelog(changelogs: list, titulo: str = "Changelog - Ashy Task") -> str:
-    """Gera HTML com formatação colorida para changelogs"""
-    
-    html = f"""<!DOCTYPE html>
+    """Gera HTML seguro e pronto para PDF."""
+    titulo_safe = html.escape(titulo, quote=True)
+    gerado_em = datetime.now().strftime('%d/%m/%Y às %H:%M')
+    pinados = len([c for c in changelogs if c['pinado']])
+    por_categoria = {}
+    for log in changelogs:
+        por_categoria[log['categoria']] = por_categoria.get(log['categoria'], 0) + 1
+
+    resumo_categorias = "".join(
+        f"<span class=\"summary-chip\">{html.escape(cat, quote=True)}: {total}</span>"
+        for cat, total in sorted(por_categoria.items())
+    )
+
+    html_content = f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{titulo}</title>
+    <title>{titulo_safe}</title>
     <style>
         @page {{
             size: A4;
-            margin: 2cm;
+            margin: 1.6cm;
+            @bottom-right {{
+                content: "Página " counter(page) " de " counter(pages);
+                color: #6b7280;
+                font-size: 9px;
+            }}
         }}
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: #e8e8e8;
-            min-height: 100vh;
-            padding: 20px;
+            font-family: "Inter", "Segoe UI", Arial, sans-serif;
+            background: #f6f8fb;
+            color: #1f2937;
+            font-size: 12px;
+            line-height: 1.45;
         }}
         .container {{
-            max-width: 900px;
+            max-width: 960px;
             margin: 0 auto;
         }}
+        .cover {{
+            border-bottom: 3px solid #2563eb;
+            padding-bottom: 18px;
+            margin-bottom: 22px;
+        }}
         h1 {{
-            text-align: center;
-            color: #00d4ff;
-            margin-bottom: 30px;
-            font-size: 2.2em;
-            text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+            color: #111827;
+            font-size: 28px;
+            line-height: 1.15;
+            margin-bottom: 8px;
         }}
-        .stats {{
-            background: rgba(255, 255, 255, 0.1);
-            padding: 15px 25px;
-            border-radius: 10px;
-            margin-bottom: 30px;
+        .subtitle {{
+            color: #6b7280;
+            font-size: 11px;
+        }}
+        .summary {{
             display: flex;
-            justify-content: space-around;
             flex-wrap: wrap;
+            gap: 8px;
+            margin: 18px 0 22px;
         }}
-        .stat-item {{
-            text-align: center;
-            padding: 10px;
+        .summary-card {{
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 10px 12px;
+            min-width: 120px;
         }}
-        .stat-number {{
-            font-size: 2em;
+        .summary-number {{
+            color: #111827;
+            font-size: 22px;
             font-weight: bold;
-            color: #00d4ff;
+        }}
+        .summary-label {{
+            color: #6b7280;
+            font-size: 10px;
+            text-transform: uppercase;
+        }}
+        .summary-chip {{
+            background: #eef2ff;
+            color: #3730a3;
+            border-radius: 999px;
+            display: inline-block;
+            font-size: 10px;
+            margin: 0 6px 6px 0;
+            padding: 4px 8px;
         }}
         .changelog-item {{
-            background: rgba(255, 255, 255, 0.05);
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
             border-left: 4px solid;
             border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 15px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
             page-break-inside: avoid;
         }}
         .changelog-item.pinned {{
-            background: rgba(255, 215, 0, 0.1);
+            background: #fffbeb;
             border-left-width: 6px;
         }}
         .changelog-header {{
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             flex-wrap: wrap;
-            gap: 10px;
+            gap: 8px;
         }}
         .categoria {{
             font-weight: bold;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.9em;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 10px;
         }}
         .pin-badge {{
-            background: #ffd700;
-            color: #1a1a2e;
-            padding: 3px 10px;
-            border-radius: 15px;
-            font-size: 0.8em;
+            background: #f59e0b;
+            color: #111827;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 9px;
             font-weight: bold;
         }}
         .meta {{
-            color: #888;
-            font-size: 0.85em;
-            margin-bottom: 10px;
+            color: #6b7280;
+            font-size: 10px;
+            margin-bottom: 8px;
         }}
         .descricao {{
-            line-height: 1.6;
             white-space: pre-wrap;
+            overflow-wrap: anywhere;
         }}
         .footer {{
             text-align: center;
-            margin-top: 40px;
-            color: #666;
-            font-size: 0.9em;
-            padding-top: 20px;
-            border-top: 1px solid #333;
+            margin-top: 28px;
+            color: #6b7280;
+            font-size: 10px;
+            padding-top: 12px;
+            border-top: 1px solid #e5e7eb;
         }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📝 {titulo}</h1>
-        <div class="stats">
-            <div class="stat-item">
-                <div class="stat-number">{len(changelogs)}</div>
-                <div>Total</div>
+        <div class="cover">
+            <h1>{titulo_safe}</h1>
+            <div class="subtitle">Gerado por Ashy Task Bot em {gerado_em}</div>
+        </div>
+        <div class="summary">
+            <div class="summary-card">
+                <div class="summary-number">{len(changelogs)}</div>
+                <div class="summary-label">Total</div>
             </div>
-            <div class="stat-item">
-                <div class="stat-number">{len([c for c in changelogs if c['pinado']])}</div>
-                <div>📌 Pinados</div>
+            <div class="summary-card">
+                <div class="summary-number">{pinados}</div>
+                <div class="summary-label">Pinados</div>
             </div>
         </div>
+        <div class="summary">{resumo_categorias}</div>
 """
     
     for log in changelogs:
         cor = CORES_CATEGORIA.get(log['categoria'], '#666666')
         pinado_class = "pinned" if log['pinado'] else ""
-        pinado_badge = '<span class="pin-badge">📌 PINADO</span>' if log['pinado'] else ""
+        pinado_badge = '<span class="pin-badge">PINADO</span>' if log['pinado'] else ""
         data = datetime.fromisoformat(log['data_criacao']).strftime('%d/%m/%Y às %H:%M')
+        categoria_safe = html.escape(log['categoria'] or "Geral", quote=True)
+        autor_safe = html.escape(log['autor_nome'] or "Desconhecido", quote=True)
+        descricao_safe = html.escape(log['descricao'] or "", quote=True)
         
-        # Escapar HTML na descrição
-        descricao_safe = log['descricao'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        
-        html += f"""
+        html_content += f"""
         <div class="changelog-item {pinado_class}" style="border-left-color: {cor};">
             <div class="changelog-header">
-                <span class="categoria" style="background: {cor}20; color: {cor};">{log['categoria']}</span>
+                <span class="categoria" style="background: {cor}20; color: {cor};">{categoria_safe}</span>
                 {pinado_badge}
             </div>
             <div class="meta">
-                📅 {data} | 👤 {log['autor_nome']} | 🆔 #{log['id']}
+                {data} | {autor_safe} | #{log['id']}
             </div>
             <div class="descricao">{descricao_safe}</div>
         </div>
 """
     
-    html += f"""
+    html_content += f"""
         <div class="footer">
-            Gerado por Ashy Task Bot em {datetime.now().strftime('%d/%m/%Y às %H:%M')}
+            Ashy Task Bot
         </div>
     </div>
 </body>
 </html>"""
     
-    return html
+    return html_content
 
 
 async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titulo: str = "Changelog"):
@@ -1189,7 +1415,11 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
     # Mensagem de aguarde
     await query.answer("⏳ Gerando arquivo...")
     
+    temp_path = None
     try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        titulo_caption = escape_markdown(titulo)
+
         if formato == "html":
             # Salvar como HTML
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
@@ -1200,13 +1430,10 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
             with open(temp_path, 'rb') as f:
                 await query.message.reply_document(
                     document=f,
-                    filename=f"changelog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
-                    caption=f"📄 *{titulo}*\n\n✅ {len(changelogs)} changelog(s) exportado(s) em HTML",
+                    filename=f"changelog_{timestamp}.html",
+                    caption=f"📄 *{titulo_caption}*\n\n✅ {len(changelogs)} changelog(s) exportado(s) em HTML",
                     parse_mode='Markdown'
                 )
-            
-            # Limpar arquivo temporário
-            os.unlink(temp_path)
             
         elif formato == "pdf":
             try:
@@ -1216,19 +1443,16 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
                 with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
                     temp_path = f.name
                 
-                HTML(string=html_content).write_pdf(temp_path)
+                HTML(string=html_content, base_url=os.getcwd()).write_pdf(temp_path)
                 
                 # Enviar arquivo
                 with open(temp_path, 'rb') as f:
                     await query.message.reply_document(
                         document=f,
-                        filename=f"changelog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                        caption=f"📕 *{titulo}*\n\n✅ {len(changelogs)} changelog(s) exportado(s) em PDF",
+                        filename=f"changelog_{timestamp}.pdf",
+                        caption=f"📕 *{titulo_caption}*\n\n✅ {len(changelogs)} changelog(s) exportado(s) em PDF",
                         parse_mode='Markdown'
                     )
-                
-                # Limpar arquivo temporário
-                os.unlink(temp_path)
                 
             except ImportError:
                 await query.message.reply_text(
@@ -1256,6 +1480,9 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
     except Exception as e:
         logger.error(f"Erro na exportação: {e}")
         await query.message.reply_text(f"❌ Erro na exportação: {str(e)}")
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 # ============ LISTAR E VISUALIZAR TAREFAS ============
@@ -1328,6 +1555,206 @@ async def minhas_tarefas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(texto, parse_mode='Markdown')
 
 
+async def buscar_tarefas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Busca tarefas por termo."""
+    if not await verificar_topico(update):
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
+        return
+
+    if not context.args:
+        await update.message.reply_text("Use: `/buscar [termo]`", parse_mode='Markdown')
+        return
+
+    termo = " ".join(context.args).strip()
+    tarefas = db.buscar_tarefas(termo)
+    termo_safe = escape_markdown(termo)
+
+    if not tarefas:
+        await update.message.reply_text(f"🔍 Nenhuma tarefa encontrada para `{termo_safe}`.", parse_mode='Markdown')
+        return
+
+    texto = f"*🔍 Resultados para* `{termo_safe}`\n\n"
+    buttons = []
+    for tarefa in tarefas[:15]:
+        titulo_safe = escape_markdown(encurtar(tarefa['titulo'], 60))
+        status_emoji = STATUS_EMOJI.get(tarefa['status'], "📌")
+        prior_emoji = PRIORIDADE_EMOJI.get(tarefa['prioridade'], "🟡")
+        categoria_safe = escape_markdown(tarefa.get('categoria') or "Sem categoria")
+        texto += f"{status_emoji} {prior_emoji} *#{tarefa['id']}* - {titulo_safe}\n"
+        texto += f"   📁 `{categoria_safe}`\n\n"
+        buttons.append([InlineKeyboardButton(f"{status_emoji} {prior_emoji} #{tarefa['id']} - {encurtar(tarefa['titulo'])}", callback_data=f"ver_{tarefa['id']}")])
+
+    if len(tarefas) > 15:
+        texto += f"_...e mais {len(tarefas) - 15} resultado(s)._"
+
+    await update.message.reply_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def adicionar_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Adiciona categoria de tarefa por comando."""
+    if not await verificar_topico(update):
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
+        return
+
+    if not context.args:
+        await update.message.reply_text("Use: `/addcategoria [nome]`", parse_mode='Markdown')
+        return
+
+    valido, nome, erro = validar_nome_categoria(" ".join(context.args))
+    if not valido:
+        await update.message.reply_text(f"❌ {erro}", parse_mode='Markdown')
+        return
+
+    if db.obter_categoria_por_nome(nome):
+        await update.message.reply_text(f"⚠️ Categoria *{escape_markdown(nome)}* já existe.", parse_mode='Markdown')
+        return
+
+    if db.adicionar_categoria(nome):
+        await update.message.reply_text(
+            f"✅ Categoria *{escape_markdown(nome)}* adicionada.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Gerenciar Categorias", callback_data="categorias_menu")]]),
+        )
+    else:
+        await update.message.reply_text(f"❌ Não foi possível criar *{escape_markdown(nome)}*.", parse_mode='Markdown')
+
+
+def texto_menu_categorias_tarefas() -> str:
+    categorias = db.listar_categorias()
+    texto = "🏷️ *Categorias de Tarefas*\n\n"
+    if not categorias:
+        return texto + "_Nenhuma categoria cadastrada._"
+
+    for cat in categorias:
+        total = db.contar_tarefas_categoria(cat['id'])
+        nome_safe = escape_markdown(cat['nome'])
+        texto += f"`{cat['id']}` - *{nome_safe}* ({total} tarefa(s))\n"
+    return texto
+
+
+def keyboard_menu_categorias_tarefas(user_id: int):
+    categorias = db.listar_categorias()
+    buttons = []
+    if usuario_pode_gerenciar(user_id):
+        buttons.append([InlineKeyboardButton("➕ Nova Categoria", callback_data="nova_categoria")])
+        for cat in categorias:
+            nome = encurtar(cat['nome'], 24)
+            buttons.append([
+                InlineKeyboardButton(f"✏️ {nome}", callback_data=f"catadm_rename_{cat['id']}"),
+                InlineKeyboardButton("🗑️", callback_data=f"catadm_del_{cat['id']}"),
+            ])
+    buttons.append([InlineKeyboardButton("🔙 Menu", callback_data="menu_voltar")])
+    return InlineKeyboardMarkup(buttons)
+
+
+async def categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lista e gerencia categorias de tarefa."""
+    if not await verificar_topico(update):
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
+        return
+
+    await update.message.reply_text(
+        texto_menu_categorias_tarefas(),
+        parse_mode='Markdown',
+        reply_markup=keyboard_menu_categorias_tarefas(update.effective_user.id),
+    )
+
+
+async def renomear_categoria_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Renomeia categoria de tarefa por comando."""
+    if not await verificar_topico(update):
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
+        return
+
+    if not usuario_pode_gerenciar(update.effective_user.id):
+        await update.message.reply_text("❌ Apenas administradores podem renomear categorias.")
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text("Use: `/renomearcategoria [id] [novo_nome]`", parse_mode='Markdown')
+        return
+
+    try:
+        categoria_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID inválido.")
+        return
+
+    valido, novo_nome, erro = validar_nome_categoria(" ".join(context.args[1:]))
+    if not valido:
+        await update.message.reply_text(f"❌ {erro}")
+        return
+
+    categoria = db.obter_categoria(categoria_id)
+    if not categoria:
+        await update.message.reply_text("❌ Categoria não encontrada.")
+        return
+
+    existente = db.obter_categoria_por_nome(novo_nome)
+    if existente and existente['id'] != categoria_id:
+        await update.message.reply_text(f"⚠️ Categoria *{escape_markdown(novo_nome)}* já existe.", parse_mode='Markdown')
+        return
+
+    if db.renomear_categoria(categoria_id, novo_nome):
+        await update.message.reply_text(
+            f"✅ Categoria *{escape_markdown(categoria['nome'])}* renomeada para *{escape_markdown(novo_nome)}*.",
+            parse_mode='Markdown',
+        )
+    else:
+        await update.message.reply_text("❌ Não foi possível renomear a categoria.")
+
+
+def remover_categoria_tarefa(categoria_id: int) -> tuple[bool, str]:
+    categoria = db.obter_categoria(categoria_id)
+    if not categoria:
+        return False, "❌ Categoria não encontrada."
+
+    if categoria['nome'].lower() == "geral":
+        return False, "❌ A categoria Geral é usada como destino padrão e não pode ser removida."
+
+    total = db.contar_tarefas_categoria(categoria_id)
+    mover_para = categoria_geral_id() if total else None
+    if db.remover_categoria(categoria_id, mover_para_id=mover_para):
+        if total:
+            return True, f"✅ Categoria removida. {total} tarefa(s) foram movidas para Geral."
+        return True, "✅ Categoria removida."
+    return False, "❌ Não foi possível remover a categoria."
+
+
+async def remover_categoria_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove categoria de tarefa por comando."""
+    if not await verificar_topico(update):
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
+        return
+
+    if not usuario_pode_gerenciar(update.effective_user.id):
+        await update.message.reply_text("❌ Apenas administradores podem remover categorias.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Use: `/removercategoria [id]`", parse_mode='Markdown')
+        return
+
+    try:
+        categoria_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID inválido.")
+        return
+
+    _, mensagem = remover_categoria_tarefa(categoria_id)
+    await update.message.reply_text(mensagem, parse_mode='Markdown')
+
+
 def escape_markdown(text: str) -> str:
     """Escapa caracteres especiais do Markdown para evitar erros de parsing"""
     if not text:
@@ -1349,15 +1776,17 @@ def formatar_tarefa(tarefa: dict) -> str:
 
     # Escapar título e descrição para evitar erros de parsing Markdown
     titulo_safe = escape_markdown(tarefa['titulo'])
-    descricao_safe = escape_markdown(tarefa['descricao'])
+    descricao_safe = escape_markdown(tarefa.get('descricao') or "Sem descrição.")
+    categoria_safe = escape_markdown(tarefa.get('categoria') or "Sem categoria")
+    autor_safe = escape_markdown(tarefa.get('autor_nome') or "Desconhecido")
 
     texto = f"*Tarefa #{tarefa['id']}*\n\n"
     texto += f"📝 *Título:* {titulo_safe}\n"
     texto += f"📄 *Descrição:* {descricao_safe}\n\n"
-    texto += f"📁 *Categoria:* `{tarefa['categoria']}`\n"
+    texto += f"📁 *Categoria:* `{categoria_safe}`\n"
     texto += f"{emoji_status} *Status:* `{status_nome}`\n"
     texto += f"{emoji_pri} *Prioridade:* `{prioridade_nome}`\n"
-    texto += f"👤 *Criada por:* `{tarefa['autor_nome']}`\n"
+    texto += f"👤 *Criada por:* `{autor_safe}`\n"
 
     # Data de criação
     data_criacao = datetime.fromisoformat(tarefa['data_criacao'])
@@ -1377,9 +1806,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
 
-    print(f"\n[DEBUG callback_handler] FUNÇÃO CHAMADA! Callback: {data}\n")
     logger.info(f"[callback_handler] Callback recebido: {data}")
     await query.answer()
+
+    # Administração de categorias de tarefas
+    if data == "categorias_menu" or data.startswith("catadm_"):
+        await handle_categorias_tarefas(query, data, context)
+        return
 
     # Filtros de listagem
     if data.startswith("filtro_"):
@@ -1445,6 +1878,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Deletar tarefa
     elif data.startswith("deletar_"):
         tarefa_id = int(data.split("_")[1])
+        tarefa = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+            await query.answer("❌ Você não tem permissão para deletar esta tarefa.", show_alert=True)
+            return
         await confirmar_delecao(query, tarefa_id)
         return
 
@@ -1462,6 +1899,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Editar tarefa
     elif data.startswith("editar_"):
         tarefa_id = int(data.split("_")[1])
+        tarefa = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+            await query.answer("❌ Você não tem permissão para editar esta tarefa.", show_alert=True)
+            return
         await mostrar_opcoes_edicao(query, tarefa_id)
         return
     
@@ -1489,6 +1930,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Editar título
     elif data.startswith("edit_titulo_"):
         tarefa_id = int(data.split("_")[2])
+        tarefa = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+            await query.answer("❌ Você não tem permissão para editar esta tarefa.", show_alert=True)
+            return
         context.user_data['editando_titulo'] = tarefa_id
         await query.answer("✍️ Digite o novo título...")
         texto = f"📝 *Editar Título da Tarefa #{tarefa_id}*\n\n"
@@ -1504,6 +1949,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Editar descrição
     elif data.startswith("edit_desc_"):
         tarefa_id = int(data.split("_")[2])
+        tarefa = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+            await query.answer("❌ Você não tem permissão para editar esta tarefa.", show_alert=True)
+            return
         context.user_data['editando_descricao'] = tarefa_id
         await query.answer("✍️ Digite a nova descrição...")
         texto = f"📄 *Editar Descrição da Tarefa #{tarefa_id}*\n\n"
@@ -1516,9 +1965,33 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(texto, parse_mode='Markdown')
         return
 
+    # Editar categoria
+    elif data.startswith("edit_cat_"):
+        tarefa_id = int(data.split("_")[2])
+        tarefa = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+            await query.answer("❌ Você não tem permissão para editar esta tarefa.", show_alert=True)
+            return
+        texto = f"📁 *Editar Categoria da Tarefa #{tarefa_id}*\n\nSelecione a nova categoria:"
+        buttons = []
+        for cat in db.listar_categorias():
+            buttons.append([InlineKeyboardButton(f"📁 {cat['nome']}", callback_data=f"set_cat_{tarefa_id}_{cat['id']}")])
+        buttons.append([InlineKeyboardButton("❌ Cancelar", callback_data=f"ver_{tarefa_id}")])
+        if query.message.photo:
+            chat_id = query.message.chat_id
+            await query.message.delete()
+            await enviar_mensagem_no_topico(bot=query.get_bot(), chat_id=chat_id, text=texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+        else:
+            await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
     # Editar prioridade
     elif data.startswith("edit_prior_"):
         tarefa_id = int(data.split("_")[2])
+        tarefa = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+            await query.answer("❌ Você não tem permissão para editar esta tarefa.", show_alert=True)
+            return
         texto = f"🎯 *Editar Prioridade da Tarefa #{tarefa_id}*\n\n"
         texto += "Selecione a nova prioridade:"
         keyboard = [
@@ -1540,8 +2013,30 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = data.split("_")
         tarefa_id = int(parts[2])
         prioridade = parts[3]
+        tarefa = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+            await query.answer("❌ Você não tem permissão para editar esta tarefa.", show_alert=True)
+            return
         db.atualizar_tarefa(tarefa_id, prioridade=prioridade)
         await query.answer(f"✅ Prioridade atualizada para {prioridade}!")
+        await mostrar_tarefa(query, tarefa_id)
+        return
+
+    # Salvar categoria
+    elif data.startswith("set_cat_"):
+        parts = data.split("_")
+        tarefa_id = int(parts[2])
+        categoria_id = int(parts[3])
+        tarefa = db.obter_tarefa(tarefa_id)
+        if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+            await query.answer("❌ Você não tem permissão para editar esta tarefa.", show_alert=True)
+            return
+        categoria = db.obter_categoria(categoria_id)
+        if not categoria:
+            await query.answer("❌ Categoria inválida.", show_alert=True)
+            return
+        db.atualizar_tarefa(tarefa_id, categoria_id=categoria_id)
+        await query.answer(f"✅ Categoria atualizada para {categoria['nome']}!")
         await mostrar_tarefa(query, tarefa_id)
         return
 
@@ -1633,7 +2128,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Changelog e Exportação
-    elif data.startswith("changelog_") or data.startswith("newlog_") or data.startswith("export_") or data.startswith("formato_"):
+    elif data.startswith("changelog_") or data.startswith("newlog_") or data.startswith("export_") or data.startswith("formato_") or data.startswith("chgcat_"):
         await handle_changelog(query, data, context)
         return
 
@@ -1641,6 +2136,69 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("menu_"):
         await handle_menu(query, data, context)
         return
+
+
+async def handle_categorias_tarefas(query, data: str, context):
+    """Processa menu de categorias de tarefas."""
+    user_id = query.from_user.id
+
+    if data == "categorias_menu":
+        await query.edit_message_text(
+            texto_menu_categorias_tarefas(),
+            parse_mode='Markdown',
+            reply_markup=keyboard_menu_categorias_tarefas(user_id),
+        )
+        return
+
+    if not usuario_pode_gerenciar(user_id):
+        await query.answer("❌ Apenas administradores podem gerenciar categorias.", show_alert=True)
+        return
+
+    if data.startswith("catadm_rename_"):
+        categoria_id = int(data.replace("catadm_rename_", ""))
+        categoria = db.obter_categoria(categoria_id)
+        if not categoria:
+            await query.answer("❌ Categoria não encontrada.", show_alert=True)
+            return
+
+        context.user_data['renomeando_categoria'] = categoria_id
+        await query.edit_message_text(
+            f"✏️ *Renomear Categoria*\n\nAtual: *{escape_markdown(categoria['nome'])}*\n\n_Digite o novo nome:_",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancelar", callback_data="categorias_menu")]]),
+        )
+        return
+
+    if data.startswith("catadm_del_"):
+        categoria_id = int(data.replace("catadm_del_", ""))
+        categoria = db.obter_categoria(categoria_id)
+        if not categoria:
+            await query.answer("❌ Categoria não encontrada.", show_alert=True)
+            return
+
+        total = db.contar_tarefas_categoria(categoria_id)
+        extra = f"\n\n{total} tarefa(s) serão movidas para *Geral*." if total else ""
+        await query.edit_message_text(
+            f"⚠️ *Remover Categoria*\n\nCategoria: *{escape_markdown(categoria['nome'])}*{extra}\n\nEsta ação não remove tarefas.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Remover", callback_data=f"catadm_confirm_del_{categoria_id}"),
+                    InlineKeyboardButton("❌ Cancelar", callback_data="categorias_menu"),
+                ]
+            ]),
+        )
+        return
+
+    if data.startswith("catadm_confirm_del_"):
+        categoria_id = int(data.replace("catadm_confirm_del_", ""))
+        sucesso, mensagem = remover_categoria_tarefa(categoria_id)
+        await query.answer(mensagem, show_alert=not sucesso)
+        await query.edit_message_text(
+            f"{mensagem}\n\n{texto_menu_categorias_tarefas()}",
+            parse_mode='Markdown',
+            reply_markup=keyboard_menu_categorias_tarefas(user_id),
+        )
 
 
 async def handle_menu(query, data: str, context):
@@ -1754,6 +2312,9 @@ async def handle_menu(query, data: str, context):
 /buscar [termo] - Buscar tarefas por palavra-chave
 /comentar [id] [texto] - Adicionar comentário em uma tarefa
 /addcategoria [nome] - Criar uma nova categoria
+/categorias - Gerenciar categorias
+/renomearcategoria [id] [novo_nome] - Renomear categoria
+/removercategoria [id] - Remover categoria
 /changelog - Gerenciar mudanças do projeto
 /stats - Ver estatísticas do projeto
 /menu - Abrir este menu
@@ -1768,7 +2329,7 @@ async def handle_menu(query, data: str, context):
 3️⃣ *Gerenciar:* Clique na tarefa para ver opções
 4️⃣ *Atualizar status:* Use os botões 🔄 ou ✅
 5️⃣ *Editar/Deletar:* Botões ✏️ e 🗑️
-6️⃣ *Adicionar categoria:* Use /addcategoria ou clique no botão ➕
+6️⃣ *Categorias:* Use /categorias para criar, renomear ou remover
 
 *📌 Configurar Tópico:*
 1️⃣ Entre no tópico desejado e use /topicoid
@@ -1839,13 +2400,14 @@ _Escolha uma das opções abaixo para navegar:_
                 InlineKeyboardButton("📋 Todas as Tarefas", callback_data="menu_tarefas"),
                 InlineKeyboardButton("👤 Minhas Tarefas", callback_data="menu_minhas")
             ],
-            [
-                InlineKeyboardButton("📝 Changelog", callback_data="changelog_menu"),
-                InlineKeyboardButton("📊 Estatísticas", callback_data="menu_stats")
-            ],
-            [
-                InlineKeyboardButton("⏳ Pendentes", callback_data="menu_filtro_pendente"),
-                InlineKeyboardButton("🔄 Em Andamento", callback_data="menu_filtro_em_andamento")
+        [
+            InlineKeyboardButton("📝 Changelog", callback_data="changelog_menu"),
+            InlineKeyboardButton("📊 Estatísticas", callback_data="menu_stats")
+        ],
+        [InlineKeyboardButton("🏷️ Categorias", callback_data="categorias_menu")],
+        [
+            InlineKeyboardButton("⏳ Pendentes", callback_data="menu_filtro_pendente"),
+            InlineKeyboardButton("🔄 Em Andamento", callback_data="menu_filtro_em_andamento")
             ],
             [
                 InlineKeyboardButton("✅ Concluídas", callback_data="menu_filtro_concluido"),
@@ -1941,6 +2503,64 @@ async def handle_changelog(query, data: str, context):
         keyboard = menu_filtro_categoria_changelog(categorias)
         await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
 
+    elif data == "changelog_categorias_admin":
+        await query.edit_message_text(
+            texto_menu_categorias_changelog(),
+            parse_mode='Markdown',
+            reply_markup=keyboard_menu_categorias_changelog(query.from_user.id),
+        )
+
+    elif data.startswith("chgcat_rename_"):
+        if not usuario_pode_gerenciar(query.from_user.id):
+            await query.answer("❌ Apenas administradores podem gerenciar categorias.", show_alert=True)
+            return
+        categoria_id = int(data.replace("chgcat_rename_", ""))
+        categoria = db.obter_categoria_changelog(categoria_id)
+        if not categoria:
+            await query.answer("❌ Categoria não encontrada.", show_alert=True)
+            return
+        context.user_data['renomeando_categoria_changelog'] = categoria_id
+        await query.edit_message_text(
+            f"✏️ *Renomear Categoria de Changelog*\n\nAtual: *{escape_markdown(categoria['nome'])}*\n\n_Digite o novo nome:_",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancelar", callback_data="changelog_categorias_admin")]]),
+        )
+
+    elif data.startswith("chgcat_del_"):
+        if not usuario_pode_gerenciar(query.from_user.id):
+            await query.answer("❌ Apenas administradores podem gerenciar categorias.", show_alert=True)
+            return
+        categoria_id = int(data.replace("chgcat_del_", ""))
+        categoria = db.obter_categoria_changelog(categoria_id)
+        if not categoria:
+            await query.answer("❌ Categoria não encontrada.", show_alert=True)
+            return
+        total = db.contar_changelogs_categoria(categoria['nome'])
+        extra = f"\n\n{total} changelog(s) serão movidos para *Geral*." if total else ""
+        await query.edit_message_text(
+            f"⚠️ *Remover Categoria de Changelog*\n\nCategoria: *{escape_markdown(categoria['nome'])}*{extra}",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Remover", callback_data=f"chgcat_confirm_del_{categoria_id}"),
+                    InlineKeyboardButton("❌ Cancelar", callback_data="changelog_categorias_admin"),
+                ]
+            ]),
+        )
+
+    elif data.startswith("chgcat_confirm_del_"):
+        if not usuario_pode_gerenciar(query.from_user.id):
+            await query.answer("❌ Apenas administradores podem gerenciar categorias.", show_alert=True)
+            return
+        categoria_id = int(data.replace("chgcat_confirm_del_", ""))
+        sucesso, mensagem = remover_categoria_changelog(categoria_id)
+        await query.answer(mensagem, show_alert=not sucesso)
+        await query.edit_message_text(
+            f"{mensagem}\n\n{texto_menu_categorias_changelog()}",
+            parse_mode='Markdown',
+            reply_markup=keyboard_menu_categorias_changelog(query.from_user.id),
+        )
+
     elif data.startswith("changelog_catidx_"):
         idx = int(data.replace("changelog_catidx_", ""))
         categorias = db.listar_categorias_changelog()
@@ -1985,6 +2605,10 @@ async def handle_changelog(query, data: str, context):
 
     elif data.startswith("changelog_editar_"):
         changelog_id = int(data.split("_")[2])
+        changelog = db.obter_changelog(changelog_id)
+        if not usuario_pode_editar_changelog(query.from_user.id, changelog):
+            await query.answer("❌ Você não tem permissão para editar este changelog.", show_alert=True)
+            return
         texto = f"✏️ *Editar Changelog #{changelog_id}*\n\n_Selecione o que deseja editar:_"
         keyboard = menu_edicao_changelog(changelog_id)
         if query.message.photo:
@@ -1996,6 +2620,10 @@ async def handle_changelog(query, data: str, context):
 
     elif data.startswith("changelog_edit_desc_"):
         changelog_id = int(data.split("_")[3])
+        changelog = db.obter_changelog(changelog_id)
+        if not usuario_pode_editar_changelog(query.from_user.id, changelog):
+            await query.answer("❌ Você não tem permissão para editar este changelog.", show_alert=True)
+            return
         context.user_data['editando_changelog_desc'] = changelog_id
         await query.answer("✍️ Digite a nova descrição...")
         texto = f"📝 *Editar Descrição - Changelog #{changelog_id}*\n\n_Digite a nova descrição:_"
@@ -2008,6 +2636,10 @@ async def handle_changelog(query, data: str, context):
 
     elif data.startswith("changelog_edit_cat_"):
         changelog_id = int(data.split("_")[3])
+        changelog = db.obter_changelog(changelog_id)
+        if not usuario_pode_editar_changelog(query.from_user.id, changelog):
+            await query.answer("❌ Você não tem permissão para editar este changelog.", show_alert=True)
+            return
         texto = f"📁 *Editar Categoria - Changelog #{changelog_id}*\n\n_Selecione a nova categoria:_"
         categorias = db.listar_categorias_changelog()
         buttons = []
@@ -2026,6 +2658,10 @@ async def handle_changelog(query, data: str, context):
         parts = data.split("_")
         changelog_id = int(parts[2])
         idx = int(parts[3])
+        changelog = db.obter_changelog(changelog_id)
+        if not usuario_pode_editar_changelog(query.from_user.id, changelog):
+            await query.answer("❌ Você não tem permissão para editar este changelog.", show_alert=True)
+            return
         categorias = db.listar_categorias_changelog()
         categoria = categorias[idx]
         db.atualizar_changelog(changelog_id, categoria=categoria)
@@ -2035,6 +2671,9 @@ async def handle_changelog(query, data: str, context):
     elif data.startswith("changelog_deletar_"):
         changelog_id = int(data.split("_")[2])
         changelog = db.obter_changelog(changelog_id)
+        if not usuario_pode_editar_changelog(query.from_user.id, changelog):
+            await query.answer("❌ Você não tem permissão para deletar este changelog.", show_alert=True)
+            return
         texto = f"⚠️ *Confirmar exclusão*\n\n"
         texto += f"Tem certeza que deseja deletar o changelog:\n\n"
         texto += f"#{changelog_id} - {changelog['categoria']}\n"
@@ -2051,6 +2690,10 @@ async def handle_changelog(query, data: str, context):
 
     elif data.startswith("changelog_confirma_del_"):
         changelog_id = int(data.split("_")[3])
+        changelog = db.obter_changelog(changelog_id)
+        if not usuario_pode_editar_changelog(query.from_user.id, changelog):
+            await query.answer("❌ Você não tem permissão para deletar este changelog.", show_alert=True)
+            return
         db.deletar_changelog(changelog_id)
         await query.edit_message_text(
             f"✅ Changelog #{changelog_id} deletado com sucesso!",
@@ -2180,7 +2823,8 @@ async def handle_filtro(query, context):
         
         # Reconstruir filtro
         if filtro_tipo == "cat":
-            tarefas = db.listar_tarefas(categoria=filtro_valor if filtro_valor != "Todas" else None)
+            categoria = db.obter_categoria_por_nome(filtro_valor) if filtro_valor and filtro_valor != "Todas" else None
+            tarefas = db.listar_tarefas(categoria_id=categoria['id'] if categoria else None)
             titulo = f"📁 Categoria: {filtro_valor}"
         elif filtro_tipo == "status":
             tarefas = db.listar_tarefas(status=filtro_valor)
@@ -2192,11 +2836,12 @@ async def handle_filtro(query, context):
     
     # Extrair filtro
     elif "filtro_cat_" in data:
-        categoria = data.replace("filtro_cat_", "")
-        tarefas = db.listar_tarefas(categoria=categoria if categoria != "Todas" else None)
-        titulo = f"📁 Categoria: {categoria}"
+        categoria_nome = data.replace("filtro_cat_", "")
+        categoria = db.obter_categoria_por_nome(categoria_nome) if categoria_nome != "Todas" else None
+        tarefas = db.listar_tarefas(categoria_id=categoria['id'] if categoria else None)
+        titulo = f"📁 Categoria: {categoria_nome}"
         filtro_tipo = "cat"
-        filtro_valor = categoria
+        filtro_valor = categoria_nome
     
     elif "filtro_status_" in data:
         status = data.replace("filtro_status_", "")
@@ -2310,7 +2955,13 @@ async def mostrar_tarefa(query, tarefa_id: int):
 
 async def mudar_status(query, tarefa_id: int, novo_status: str):
     """Muda o status de uma tarefa"""
-    db.atualizar_status(tarefa_id, novo_status)
+    if novo_status not in STATUS:
+        await query.answer("❌ Status inválido.", show_alert=True)
+        return
+
+    if not db.atualizar_status(tarefa_id, novo_status):
+        await query.answer("❌ Tarefa não encontrada.", show_alert=True)
+        return
     
     emoji = STATUS_EMOJI.get(novo_status, '📌')
     status_nome = novo_status.replace('_', ' ').title()
@@ -2323,6 +2974,9 @@ async def mudar_status(query, tarefa_id: int, novo_status: str):
 async def confirmar_delecao(query, tarefa_id: int):
     """Pede confirmação para deletar"""
     tarefa = db.obter_tarefa(tarefa_id)
+    if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+        await query.answer("❌ Você não tem permissão para deletar esta tarefa.", show_alert=True)
+        return
 
     texto = f"⚠️ *Confirmar exclusão*\n\n"
     texto += f"Tem certeza que deseja deletar a tarefa:\n\n"
@@ -2350,6 +3004,11 @@ async def confirmar_delecao(query, tarefa_id: int):
 
 async def deletar_tarefa(query, tarefa_id: int):
     """Deleta uma tarefa"""
+    tarefa = db.obter_tarefa(tarefa_id)
+    if not usuario_pode_editar_tarefa(query.from_user.id, tarefa):
+        await query.answer("❌ Você não tem permissão para deletar esta tarefa.", show_alert=True)
+        return
+
     db.deletar_tarefa(tarefa_id)
     
     await query.edit_message_text(
@@ -2507,6 +3166,12 @@ async def voltar_lista(query):
 
 async def admin_deletar_tarefa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Deleta qualquer tarefa (comando apenas para admins)"""
+    if not await verificar_topico(update):
+        topico_info = db.obter_info_topico()
+        mensagem = await obter_mensagem_topico_restrito(topico_info)
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
+        return
+
     user = update.effective_user
     
     # Verificar se é admin
@@ -2577,8 +3242,11 @@ def main():
     application.add_handler(CommandHandler("tarefas", listar_tarefas))
     application.add_handler(CommandHandler("minhas", minhas_tarefas))
     application.add_handler(CommandHandler("comentar", adicionar_comentario_cmd))
-    application.add_handler(CommandHandler("buscar", handlers.buscar_tarefas))
-    application.add_handler(CommandHandler("addcategoria", handlers.adicionar_categoria))
+    application.add_handler(CommandHandler("buscar", buscar_tarefas))
+    application.add_handler(CommandHandler("addcategoria", adicionar_categoria))
+    application.add_handler(CommandHandler("categorias", categorias))
+    application.add_handler(CommandHandler("renomearcategoria", renomear_categoria_cmd))
+    application.add_handler(CommandHandler("removercategoria", remover_categoria_cmd))
     application.add_handler(CommandHandler("topicoid", topicoid))
     application.add_handler(CommandHandler("settopico", settopico))
     application.add_handler(CommandHandler("deletetarefa", admin_deletar_tarefa))

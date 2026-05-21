@@ -1,4 +1,89 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import os as _os
+
+from telegram import InlineKeyboardButton as _TelegramInlineKeyboardButton
+from telegram import InlineKeyboardMarkup
+
+
+_ENABLE_BUTTON_STYLES = _os.getenv("TELEGRAM_BUTTON_STYLES", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+
+
+def _parse_custom_emoji_ids() -> dict:
+    """Parse custom emoji IDs for Bot API 9.4+ button icons."""
+    raw = _os.getenv("TELEGRAM_BUTTON_CUSTOM_EMOJI_IDS", "")
+    items = {}
+    for chunk in raw.split(","):
+        if "=" not in chunk:
+            continue
+        key, value = chunk.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key and value:
+            items[key] = value
+    return items
+
+
+_CUSTOM_EMOJI_IDS = _parse_custom_emoji_ids()
+
+
+def _infer_button_action(text: str, callback_data=None) -> str:
+    data = str(callback_data or "").lower()
+    label = (text or "").lower()
+    probe = f"{data} {label}"
+
+    if data == "ignore":
+        return "plain"
+    if any(word in probe for word in ("confirma_del", "deletar", "delete", "remover", "danger", "🗑", "❌", "alta")):
+        return "danger"
+    if any(word in probe for word in ("concluir", "concluido", "confirm", "salvar", "criar", "nova", "adicionar", "success", "✅", "➕", "baixa")):
+        return "success"
+    if any(word in probe for word in ("pdf", "export", "pin", "editar", "menu", "voltar", "categoria", "tarefas", "stats", "primary", "📕", "✏", "📊")):
+        return "primary"
+    if any(word in probe for word in ("media", "pendente", "andamento", "prior")):
+        return "primary"
+    return "primary"
+
+
+def _style_for_action(action: str) -> str | None:
+    if not _ENABLE_BUTTON_STYLES or action == "plain":
+        return None
+    if action in {"danger", "success", "primary"}:
+        return action
+    return "primary"
+
+
+def _custom_emoji_for(action: str, style: str | None, callback_data=None) -> str | None:
+    data = str(callback_data or "").lower()
+    return (
+        _CUSTOM_EMOJI_IDS.get(data)
+        or _CUSTOM_EMOJI_IDS.get(action)
+        or (style and _CUSTOM_EMOJI_IDS.get(style))
+    )
+
+
+def InlineKeyboardButton(text, *args, style=None, icon_custom_emoji_id=None, **kwargs):
+    """Create Bot API 9.4+ inline buttons with backward-compatible PTB payloads."""
+    callback_data = kwargs.get("callback_data")
+    if callback_data is None and len(args) >= 2:
+        callback_data = args[1]
+
+    api_kwargs = dict(kwargs.pop("api_kwargs", {}) or {})
+    action = _infer_button_action(text, callback_data)
+    resolved_style = style or _style_for_action(action)
+    resolved_icon = icon_custom_emoji_id or _custom_emoji_for(action, resolved_style, callback_data)
+
+    if resolved_style:
+        api_kwargs.setdefault("style", resolved_style)
+    if resolved_icon:
+        api_kwargs.setdefault("icon_custom_emoji_id", resolved_icon)
+    if api_kwargs:
+        kwargs["api_kwargs"] = api_kwargs
+
+    return _TelegramInlineKeyboardButton(text, *args, **kwargs)
 
 # Emojis para status e prioridades
 STATUS_EMOJI = {
@@ -114,6 +199,9 @@ def menu_edicao(tarefa_id):
             InlineKeyboardButton("📄 Editar Descrição", callback_data=f"edit_desc_{tarefa_id}"),
         ],
         [
+            InlineKeyboardButton("📁 Editar Categoria", callback_data=f"edit_cat_{tarefa_id}"),
+        ],
+        [
             InlineKeyboardButton("🎯 Editar Prioridade", callback_data=f"edit_prior_{tarefa_id}"),
         ],
         [
@@ -185,6 +273,7 @@ def menu_changelog_principal():
             InlineKeyboardButton("🖥️ Por Categoria", callback_data="changelog_categorias"),
             InlineKeyboardButton("📊 Estatísticas", callback_data="changelog_stats")
         ],
+        [InlineKeyboardButton("🏷️ Categorias", callback_data="changelog_categorias_admin")],
         [InlineKeyboardButton("📤 Exportar", callback_data="changelog_exportar")],
         [InlineKeyboardButton("🔙 Voltar ao Menu", callback_data="menu_voltar")]
     ]
@@ -284,4 +373,3 @@ def menu_exportar_categoria_changelog(categorias):
 
     keyboard.append([InlineKeyboardButton("🔙 Voltar", callback_data="changelog_exportar")])
     return InlineKeyboardMarkup(keyboard)
-
