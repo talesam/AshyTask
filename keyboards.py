@@ -349,6 +349,7 @@ def menu_exportar_changelog():
     keyboard = [
         [InlineKeyboardButton("📋 Exportar Todos", callback_data="export_todos")],
         [InlineKeyboardButton("📌 Exportar Pinados", callback_data="export_pinados")],
+        [InlineKeyboardButton("📅 Por Período", callback_data="export_periodo")],
         [InlineKeyboardButton("🖥️ Por Categoria", callback_data="export_categorias")],
         [InlineKeyboardButton("🔙 Voltar", callback_data="changelog_menu")]
     ]

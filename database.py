@@ -106,6 +106,7 @@ class Database:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tarefas_status ON tarefas(status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tarefas_autor ON tarefas(autor_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_changelogs_categoria ON changelogs(categoria)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_changelogs_data ON changelogs(data_criacao)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_changelogs_pin_data ON changelogs(pinado, data_criacao)")
 
         conn.commit()
@@ -712,7 +713,13 @@ class Database:
         conn.close()
         return changelog_id
 
-    def listar_changelogs(self, categoria: Optional[str] = None, pinado: Optional[bool] = None) -> List[Dict]:
+    def listar_changelogs(
+        self,
+        categoria: Optional[str] = None,
+        pinado: Optional[bool] = None,
+        data_inicio: Optional[str] = None,
+        data_fim: Optional[str] = None,
+    ) -> List[Dict]:
         """Lista changelogs com filtros opcionais"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -727,6 +734,14 @@ class Database:
         if pinado is not None:
             query += " AND pinado = ?"
             params.append(1 if pinado else 0)
+
+        if data_inicio:
+            query += " AND data_criacao >= ?"
+            params.append(data_inicio)
+
+        if data_fim:
+            query += " AND data_criacao <= ?"
+            params.append(data_fim)
 
         query += " ORDER BY pinado DESC, data_criacao DESC"
 

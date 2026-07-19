@@ -36,7 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Versão do bot
-VERSION = "1.6.5"
+VERSION = "1.7.0"
 
 # Carregar IDs dos administradores
 admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -99,6 +99,73 @@ def validar_nome_categoria(nome: str) -> tuple[bool, str, str]:
 
 def categoria_geral_id() -> int:
     return db.obter_ou_criar_categoria("Geral")
+
+
+def parse_data_usuario(valor: str) -> Optional[datetime]:
+    valor = (valor or "").strip()
+    formatos = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y")
+    for formato in formatos:
+        try:
+            return datetime.strptime(valor, formato)
+        except ValueError:
+            continue
+    return None
+
+
+def parse_periodo_changelog(texto: str) -> tuple[Optional[datetime], Optional[datetime], str]:
+    texto = (texto or "").strip()
+    for separador in (" até ", " ate ", " a ", " - ", ",", ";"):
+        texto = texto.replace(separador, " ")
+    texto = " ".join(texto.split())
+    partes = texto.split()
+
+    if len(partes) == 1:
+        inicio = parse_data_usuario(partes[0])
+        if not inicio:
+            return None, None, "Data inválida. Use 01/05/2026 ou 2026-05-01."
+        fim = inicio.replace(hour=23, minute=59, second=59)
+        return inicio.replace(hour=0, minute=0, second=0), fim, ""
+
+    if len(partes) != 2:
+        return None, None, "Informe início e fim. Exemplo: 01/05/2026 31/05/2026."
+
+    inicio = parse_data_usuario(partes[0])
+    fim = parse_data_usuario(partes[1])
+    if not inicio or not fim:
+        return None, None, "Data inválida. Use 01/05/2026 31/05/2026 ou 2026-05-01 2026-05-31."
+
+    inicio = inicio.replace(hour=0, minute=0, second=0)
+    fim = fim.replace(hour=23, minute=59, second=59)
+    if inicio > fim:
+        return None, None, "A data inicial não pode ser maior que a data final."
+
+    return inicio, fim, ""
+
+
+def periodo_para_callback(inicio: datetime, fim: datetime) -> str:
+    return f"periodo_{inicio.strftime('%Y%m%d')}_{fim.strftime('%Y%m%d')}"
+
+
+def periodo_de_callback(valor: str) -> tuple[Optional[datetime], Optional[datetime]]:
+    partes = valor.split("_")
+    if len(partes) != 3 or partes[0] != "periodo":
+        return None, None
+    try:
+        inicio = datetime.strptime(partes[1], "%Y%m%d").replace(hour=0, minute=0, second=0)
+        fim = datetime.strptime(partes[2], "%Y%m%d").replace(hour=23, minute=59, second=59)
+    except ValueError:
+        return None, None
+    if inicio > fim:
+        return None, None
+    return inicio, fim
+
+
+def fmt_periodo(inicio: datetime, fim: datetime) -> str:
+    return f"{inicio.strftime('%d/%m/%Y')} a {fim.strftime('%d/%m/%Y')}"
+
+
+def iso_sql_data(data: datetime) -> str:
+    return data.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def keyboard_filtros():
@@ -866,6 +933,28 @@ async def processar_mensagem_texto(update: Update, context: ContextTypes.DEFAULT
         del context.user_data['renomeando_categoria_changelog']
         return
 
+    # Changelog export date range.
+    if context.user_data.get('aguardando_periodo_changelog'):
+        inicio, fim, erro = parse_periodo_changelog(texto)
+        if erro:
+            await update.message.reply_text(
+                f"❌ {erro}\n\nExemplos:\n`01/05/2026 31/05/2026`\n`2026-05-01 2026-05-31`",
+                parse_mode='Markdown'
+            )
+            return
+
+        context.user_data.pop('aguardando_periodo_changelog', None)
+        filtro = periodo_para_callback(inicio, fim)
+        periodo = fmt_periodo(inicio, fim)
+        total = len(db.listar_changelogs(data_inicio=iso_sql_data(inicio), data_fim=iso_sql_data(fim)))
+
+        await update.message.reply_text(
+            f"📅 *Exportar período*\n\nPeríodo: `{periodo}`\nChangelogs encontrados: `{total}`\n\n_Escolha o formato:_",
+            parse_mode='Markdown',
+            reply_markup=menu_formato_exportacao(filtro)
+        )
+        return
+
     # Verificar se está processando changelog
     if 'editando_changelog_desc' in context.user_data or 'criando_changelog_cat' in context.user_data or 'criando_categoria_changelog' in context.user_data:
         await processar_changelog_texto(update, context)
@@ -1605,6 +1694,7 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
                     document=f,
                     filename=f"changelog_{timestamp}.html",
                     caption=f"📄 {titulo}\n\n✅ {len(changelogs)} changelog(s) exportado(s) em HTML",
+                    parse_mode=None,
                 )
             
         elif formato == "pdf":
@@ -1623,6 +1713,7 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
                     document=f,
                     filename=f"changelog_{timestamp}.pdf",
                     caption=f"📕 {titulo}\n\n✅ {len(changelogs)} changelog(s) exportado(s) em PDF",
+                    parse_mode=None,
                 )
         
         # Atualizar mensagem original
@@ -1634,7 +1725,7 @@ async def exportar_changelog_arquivo(query, changelogs: list, formato: str, titu
         
     except Exception as e:
         logger.exception("Erro na exportação")
-        await query.message.reply_text(f"❌ Erro na exportação: {str(e)}")
+        await query.message.reply_text(f"❌ Erro na exportação: {str(e)}", parse_mode=None)
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
@@ -2861,6 +2952,7 @@ async def handle_changelog(query, data: str, context):
 
     elif data == "changelog_exportar":
         # Menu de opções de exportação
+        context.user_data.pop('aguardando_periodo_changelog', None)
         texto = "📤 *Exportar Changelog*\n\n_Selecione o que deseja exportar:_"
         keyboard = menu_exportar_changelog()
         await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
@@ -2878,6 +2970,21 @@ async def handle_changelog(query, data: str, context):
         texto = "📤 *Exportar Changelogs Pinados*\n\n_Escolha o formato:_"
         keyboard = menu_formato_exportacao("pinados")
         await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif data == "export_periodo":
+        context.user_data['aguardando_periodo_changelog'] = True
+        texto = (
+            "📅 *Exportar por Período*\n\n"
+            "_Digite a data inicial e final:_\n\n"
+            "`01/05/2026 31/05/2026`\n"
+            "`2026-05-01 2026-05-31`\n\n"
+            "Para um único dia, envie só uma data."
+        )
+        await query.edit_message_text(
+            texto,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancelar", callback_data="changelog_exportar")]])
+        )
 
     elif data == "export_categorias":
         # Mostrar lista de categorias para exportar
@@ -2921,6 +3028,16 @@ async def handle_changelog(query, data: str, context):
             else:
                 await query.answer("❌ Categoria inválida!", show_alert=True)
                 return
+        elif filtro_tipo.startswith("periodo_"):
+            inicio, fim = periodo_de_callback(filtro_tipo)
+            if not inicio or not fim:
+                await query.answer("❌ Período inválido!", show_alert=True)
+                return
+            changelogs = db.listar_changelogs(
+                data_inicio=iso_sql_data(inicio),
+                data_fim=iso_sql_data(fim),
+            )
+            titulo = f"Changelog - {fmt_periodo(inicio, fim)}"
         else:
             changelogs = db.listar_changelogs()
             titulo = "Changelog - Ashy Task"
