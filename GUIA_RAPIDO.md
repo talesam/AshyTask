@@ -3,7 +3,7 @@
 ## Passo 1: Instalar dependências
 
 ```bash
-pip install python-telegram-bot==20.7
+pip install -r requirements.txt
 ```
 
 ## Passo 2: Criar o bot no Telegram
@@ -17,27 +17,16 @@ pip install python-telegram-bot==20.7
 
 ## Passo 3: Configurar o token
 
-Edite o arquivo `bot.py` na linha onde está:
+Copie `.env.example` para `.env` e defina o token:
 
-```python
-TOKEN = "SEU_TOKEN_AQUI"
-```
-
-Substitua por seu token real:
-
-```python
-TOKEN = "7123456789:AAHdqTcvCH1vGEVBfXqQyFKd3yXUfY-abcd"
+```env
+TELEGRAM_BOT_TOKEN=7123456789:AAHdqTcvCH1vGEVBfXqQyFKd3yXUfY-abcd
 ```
 
 ## Passo 4: Executar o bot
 
 ```bash
 python3 bot.py
-```
-
-Você verá:
-```
-🤖 Bot iniciado! Aguardando mensagens...
 ```
 
 ## Passo 5: Testar no Telegram
@@ -55,6 +44,8 @@ Você verá:
 /tarefas        - Ver todas as tarefas
 /minhas         - Ver suas tarefas
 /buscar teste   - Buscar tarefas
+/categorias     - Gerenciar categorias
+/changelog      - Gerenciar changelog
 ```
 
 ## Usar em um grupo:
@@ -73,8 +64,8 @@ Para parar o bot, pressione `Ctrl + C` no terminal.
 
 ```
 📁 seu_projeto/
-  ├── bot.py              ⭐ Arquivo principal (configure o TOKEN aqui)
-  ├── handlers.py         🎮 Lógica dos comandos
+  ├── bot.py              ⭐ Arquivo principal
+  ├── handlers.py         🎮 Compatibilidade antiga
   ├── keyboards.py        ⌨️ Botões e menus
   ├── database.py         💾 Banco de dados
   ├── requirements.txt    📦 Dependências
@@ -87,15 +78,15 @@ Para parar o bot, pressione `Ctrl + C` no terminal.
 ```
 /nova
   ↓
-📁 Escolhe categoria (XFCE, Cinnamon, GNOME, Geral)
-  ↓
 ✍️ Digite o título
   ↓  
-📝 Digite a descrição (ou /pular)
+📝 Digite a descrição
+  ↓
+📁 Escolha categoria
   ↓
 🎯 Escolha prioridade (Alta, Média, Baixa)
   ↓
-📸 Envie imagem (opcional, ou /pular)
+📸 Envie imagem (opcional, ou clique em Pular)
   ↓
 ✅ Tarefa criada!
 ```

@@ -13,6 +13,8 @@ Bot para Telegram desenvolvido para gerenciar tarefas de projetos (XFCE, Cinnamo
 - 🔍 Busca de tarefas
 - 👤 Controle de autoria (apenas o criador pode editar/deletar)
 - 📝 Sistema de Changelog para documentar mudanças do projeto
+- 📤 Exportação de changelog em HTML e PDF
+- 🎨 Botões com estilos da Bot API 9.4+ (azul, verde, vermelho)
 - 📌 Restrição a tópico específico (ideal para grupos com múltiplos tópicos)
 - 📱 Interface intuitiva com inline keyboards
 
@@ -66,13 +68,16 @@ python bot.py
 - `/menu` - Abre menu de navegação completo
 - `/stats` - Mostra estatísticas do projeto
 - `/buscar [termo]` - Busca tarefas por palavra-chave
+- `/comentar [id] [texto]` - Adiciona comentário a uma tarefa
 
 ### Comandos de Changelog
 - `/changelog` - Abre menu de gerenciamento de changelogs
   - Criar novo changelog
   - Listar todos ou apenas pinados
   - Filtrar por categoria
+  - Gerenciar categorias de changelog
   - Ver estatísticas
+  - Exportar HTML/PDF
 
 ### Comandos de Tópico
 - `/topicoid` - Mostra o ID do tópico atual
@@ -80,8 +85,11 @@ python bot.py
 - `/settopico off` - Desabilita restrição de tópico
 
 ### Comandos Administrativos
-- `/addcategoria [nome]` - Adiciona nova categoria
-- `/comentar [id] [texto]` - Adiciona comentário a uma tarefa
+- `/categorias` - Lista e gerencia categorias de tarefas
+- `/addcategoria [nome]` - Adiciona nova categoria de tarefa
+- `/renomearcategoria [id] [novo_nome]` - Renomeia categoria de tarefa
+- `/removercategoria [id]` - Remove categoria de tarefa e move tarefas para Geral
+- `/deletetarefa [id]` - Remove qualquer tarefa (ADMIN_IDS)
 
 ### Comandos de Ajuda
 - `/ajuda` - Mostra todos os comandos disponíveis
@@ -122,6 +130,7 @@ Use `/tarefas` para abrir o menu principal. Você pode:
 - **Editar** tarefa (apenas criador) ✏️
 - **Deletar** tarefa (apenas criador) 🗑️
 - **Ver comentários** 💬
+- **Gerenciar categorias** com `/categorias`
 
 ### Gerenciar Changelogs
 
@@ -132,6 +141,8 @@ Use `/changelog` para documentar mudanças do projeto:
 - **Filtrar** por categoria (Ashy Terminal, GNOME, XFCE, etc.)
 - **Editar ou deletar** changelogs (apenas criador)
 - **Ver estatísticas** de changelogs por categoria e autor
+- **Exportar** changelogs em HTML ou PDF
+- **Gerenciar categorias** pelo menu do changelog
 
 ### Status das Tarefas
 
@@ -150,7 +161,7 @@ Use `/changelog` para documentar mudanças do projeto:
 ```
 .
 ├── bot.py           # Arquivo principal
-├── handlers.py      # Lógica dos comandos e callbacks
+├── handlers.py      # Compatibilidade antiga
 ├── keyboards.py     # Layouts dos botões inline
 ├── database.py      # Gerenciamento do SQLite
 ├── requirements.txt # Dependências Python
@@ -177,6 +188,7 @@ O banco é criado automaticamente na primeira execução.
 Pelo bot:
 ```
 /addcategoria KDE
+/categorias
 ```
 
 Ou edite `database.py` e adicione na lista `categorias_padrao`:
@@ -196,14 +208,28 @@ STATUS_EMOJI = {
 }
 ```
 
+### Botões coloridos e emojis customizados
+
+A Bot API 9.4+ suporta `style` e `icon_custom_emoji_id` em botões. O bot envia esses campos via `api_kwargs`.
+
+```env
+TELEGRAM_BUTTON_STYLES=1
+TELEGRAM_BUTTON_CUSTOM_EMOJI_IDS=success=ID,danger=ID,primary=ID
+```
+
+Os estilos disponíveis são `primary` (azul), `success` (verde) e `danger` (vermelho). Emojis customizados dependem das regras do Telegram para bots com suporte a custom emoji.
+
 ## 🔒 Segurança e Permissões
 
 ### Tarefas
 - ✏️ Apenas o criador pode editar ou deletar
+- 🛡️ Admins em `ADMIN_IDS` também podem editar/deletar
 - 👥 Todos podem ver, comentar e mudar status (colaborativo)
+- 🏷️ Se `ADMIN_IDS` estiver vazio, categorias ficam abertas para compatibilidade
 
 ### Changelogs
 - ✏️ Apenas o criador pode editar ou deletar
+- 🛡️ Admins em `ADMIN_IDS` também podem editar/deletar
 - 📌 Todos podem pinar/despinar changelogs
 - 👥 Todos podem visualizar
 
